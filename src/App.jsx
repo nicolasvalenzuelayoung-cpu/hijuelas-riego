@@ -2,23 +2,58 @@ import { useState, useEffect, useCallback } from "react";
 
 const LAT = -32.785, LON = -71.143;
 
+// ─── Kc mensual por cultivo (hemisferio sur, 32°S, Hijuelas)
+// Índice 0=Enero … 11=Diciembre
+// Base: FAO-56 + INIA Chile + CNR, ajustado fenología mediterránea
+const KC_MENSUAL = {
+  // Lanelate: cosecha jul-ago → post-cos ago-sep → floración sep-oct → cuaja oct-nov → engrose nov-mar
+  lanelate:  [0.78,0.75,0.72,0.68,0.65,0.63,0.63,0.65,0.70,0.76,0.79,0.79],
+  // Valencia/Midnight: cosecha ago-oct → similar pero desfasada ~1 mes
+  valencia:  [0.77,0.74,0.71,0.68,0.65,0.63,0.63,0.65,0.70,0.75,0.78,0.78],
+  // Limón: producción casi continua, menor variación estacional
+  limon:     [0.73,0.70,0.68,0.65,0.63,0.61,0.61,0.63,0.67,0.72,0.74,0.74],
+  // Paltos Hass: engrose ene-feb → cosecha mar-may → post-cos may-jul → floración ago-sep → cuaja oct → engrose nov-dic
+  paltos_v:  [0.95,0.95,0.88,0.82,0.76,0.72,0.72,0.78,0.85,0.90,0.92,0.94],
+  paltos_n12:[0.95,0.95,0.88,0.82,0.76,0.72,0.72,0.78,0.85,0.90,0.92,0.94],
+  paltos_n3: [0.95,0.95,0.88,0.82,0.76,0.72,0.72,0.78,0.85,0.90,0.92,0.94],
+};
+
+const FENOLOGIA = {
+  lanelate: ["Engrose avanzado","Engrose / maduración","Maduración","Maduración / inicio cosecha","Cosecha","Reposo post-cosecha","Cosecha / brotación","Brotación","Floración plena","Cuaja","Engrose inicial","Engrose"],
+  valencia: ["Engrose avanzado","Engrose / maduración","Maduración","Maduración","Inicio cosecha","Reposo","Reposo","Brotación","Floración plena","Cuaja","Engrose inicial","Engrose"],
+  limon:    ["Producción / engrose","Producción","Producción","Post-cosecha parcial","Reposo relativo","Reposo","Floración","Floración / cuaja","Cuaja / producción","Producción","Producción","Engrose / producción"],
+  paltos_v: ["Engrose máximo","Engrose máximo","Maduración / cosecha Hass","Cosecha plena","Post-cosecha","Reposo invernal","Reposo / floración incipiente","Floración plena","Cuaja","Crecimiento inicial fruto","Engrose","Engrose acelerado"],
+  paltos_n12:["Engrose máximo","Engrose máximo","Maduración / cosecha Hass","Cosecha plena","Post-cosecha","Reposo invernal","Reposo / floración incipiente","Floración plena","Cuaja","Crecimiento inicial fruto","Engrose","Engrose acelerado"],
+  paltos_n3: ["Engrose máximo","Engrose máximo","Maduración / cosecha Hass","Cosecha plena","Post-cosecha","Reposo invernal","Reposo / floración incipiente","Floración plena","Cuaja","Crecimiento inicial fruto","Engrose","Engrose acelerado"],
+};
+
+// Devuelve Kc del mes de una fecha dada (o mes actual)
+const kcDeFecha = (id, fecha) => {
+  const mes = fecha ? new Date(fecha+"T12:00:00").getMonth() : new Date().getMonth();
+  return KC_MENSUAL[id]?.[mes] ?? 0.80;
+};
+const fenoDeFecha = (id, fecha) => {
+  const mes = fecha ? new Date(fecha+"T12:00:00").getMonth() : new Date().getMonth();
+  return FENOLOGIA[id]?.[mes] ?? "—";
+};
+
 const CULTIVOS = [
-  { id:"lanelate",   grupo:"citricos", label:"Naranjos Lanelate",    emoji:"🍊", cultivo:"4.50×2.00 m", area:5.06,  kc:0.70, ef:90, color:"#C2622D", light:"#F5E6D8", plano:"MELBACE2 · 2006",
+  { id:"lanelate",   grupo:"citricos", label:"Naranjos Lanelate",    emoji:"🍊", cultivo:"4.50×2.00 m", area:5.06,  ef:90, color:"#C2622D", light:"#F5E6D8", plano:"MELBACE2 · 2006",
     emisor:"TIRAN 16D · 2 l/h · doble línea", bomba:"VOGT N 629 · 15 HP", filtro:"SPIN KLIN 2\" × 3 ud.",
     turnos:[{id:"S1",label:"Sector 1",ha:2.53,q:45.55,bloques:"1,1·2,1·3,1·4,1·5,1"},{id:"S2",label:"Sector 2",ha:2.53,q:46.34,bloques:"6,1·8,1·9,1·10,1·11,1"}]},
-  { id:"valencia",   grupo:"citricos", label:"Valencia / Midnight",   emoji:"🌕", cultivo:"5.00×2.00 m", area:11.99, kc:0.72, ef:90, color:"#B8860B", light:"#FBF3D5", plano:"MELBACE4 · 2017",
+  { id:"valencia",   grupo:"citricos", label:"Valencia / Midnight",   emoji:"🌕", cultivo:"5.00×2.00 m", area:11.99, ef:90, color:"#B8860B", light:"#FBF3D5", plano:"MELBACE4 · 2017",
     emisor:"QUILLAY 16.10 · 2 l/h · doble línea", bomba:"KSB 1125-100-160 · 40 HP", filtro:"Anillas PUELO 3\" × 6 ud.",
     turnos:[{id:"OP1",label:"Operación 1",ha:6.00,q:99.7,bloques:"1.1·2.1·3.1·4.1·5.1·6.1·7.1·8.1"},{id:"OP2",label:"Operación 2",ha:5.99,q:98.7,bloques:"9.1·10.1·11.1·12.1"}]},
-  { id:"limon",      grupo:"citricos", label:"Limón",                 emoji:"🍋", cultivo:"6.00×4.00 m", area:3.01,  kc:0.68, ef:90, color:"#7A9E3B", light:"#EAF3D5", plano:"MELBACE2 · 2006",
+  { id:"limon",      grupo:"citricos", label:"Limón",                 emoji:"🍋", cultivo:"6.00×4.00 m", area:3.01,  ef:90, color:"#7A9E3B", light:"#EAF3D5", plano:"MELBACE2 · 2006",
     emisor:"PCJ 16 / RAM 16D · 2–4 l/h", bomba:"VOGT N 629 · 15 HP", filtro:"SPIN KLIN 2\" × 3 ud.",
     turnos:[{id:"S3",label:"Sector 3",ha:1.25,q:15.85,bloques:"12,1"},{id:"S4",label:"Sector 4",ha:1.76,q:19.22,bloques:"7,1"}]},
-  { id:"paltos_v",   grupo:"paltos",   label:"Paltos Viejos",         emoji:"🥑", cultivo:"6.00×4.00 m", area:10.04, kc:0.85, ef:90, color:"#3D6B35", light:"#DFF0D8", plano:"VER VIII · 2013",
+  { id:"paltos_v",   grupo:"paltos",   label:"Paltos Viejos",         emoji:"🥑", cultivo:"6.00×4.00 m", area:10.04, ef:90, color:"#3D6B35", light:"#DFF0D8", plano:"VER VIII · 2013",
     emisor:"RAM 16D · 2.3 l/h · doble línea", bomba:"KSB 65-200 · 25 HP", filtro:"Control de heladas exist.",
     turnos:[{id:"T1",label:"Turno 1",ha:2.59,q:56.6,bloques:"1.1·2.1·3.1"},{id:"T2",label:"Turno 2",ha:2.54,q:54.6,bloques:"4.1·5.1"},{id:"T3",label:"Turno 3",ha:2.75,q:58.7,bloques:"6.1·7.1·8.1"},{id:"T4",label:"Turno 4",ha:2.16,q:46.3,bloques:"9.1·10.1·11.1·12.1"}]},
-  { id:"paltos_n12", grupo:"paltos",   label:"Paltos Nuevos 1+2",     emoji:"🌱", cultivo:"5.00×2.00 m", area:5.93,  kc:0.85, ef:90, color:"#4A7C41", light:"#E3F1DD", plano:"MELBACE3-CH · 2013",
+  { id:"paltos_n12", grupo:"paltos",   label:"Paltos Nuevos 1+2",     emoji:"🌱", cultivo:"5.00×2.00 m", area:5.93,  ef:90, color:"#4A7C41", light:"#E3F1DD", plano:"MELBACE3-CH · 2013",
     emisor:"QUILLAY 16/10 · 2.0 l/h · doble línea", bomba:"KSB 65-160 · 20 HP", filtro:"Anillas PUELO 3\" × 4 ud.",
     turnos:[{id:"T1",label:"Turno 1",ha:3.21,q:53.6,bloques:"1.1·6.1·7.1·8.1·9.1"},{id:"T2",label:"Turno 2",ha:2.72,q:44.3,bloques:"2.1·3.1·4.1·5.1"}]},
-  { id:"paltos_n3",  grupo:"paltos",   label:"Paltos Nuevos 3",       emoji:"🌿", cultivo:"6.00×4.00 m", area:2.77,  kc:0.85, ef:90, color:"#2E7D52", light:"#D4EDDF", plano:"MELBACE2 y CH · 2024",
+  { id:"paltos_n3",  grupo:"paltos",   label:"Paltos Nuevos 3",       emoji:"🌿", cultivo:"6.00×4.00 m", area:2.77,  ef:90, color:"#2E7D52", light:"#D4EDDF", plano:"MELBACE2 y CH · 2024",
     emisor:"BOLDO 16/10 · 2.0 l/h · 2 líneas", bomba:"VOGT 15HP + 10HP en serie", filtro:"Anillas PUELO 2×3 ud.",
     turnos:[{id:"B1",label:"Bloque 1",ha:1.12,q:15.51,bloques:"Blq.1"},{id:"B2",label:"Bloque 2",ha:0.77,q:10.50,bloques:"Blq.2"},{id:"B3",label:"Bloque 3",ha:0.88,q:11.92,bloques:"Blq.3"}]},
 ];
@@ -38,6 +73,11 @@ function calc(c,kc,eto,precip){
     const etc=eto*kc,neto=Math.max(0,etc-ep),bruto=neto/(c.ef/100),volHa=bruto*10,volTotal=volHa*t.ha,horas=t.q>0?volTotal/t.q:0;
     return{...t,etc,neto,bruto,volHa,volTotal,horas,ep};
   });
+}
+// Calcula usando Kc automático de la fecha si kcAuto=true, sino el Kc manual
+function calcAuto(c, kcs, kcAuto, eto, precip, fecha){
+  const kc = kcAuto ? kcDeFecha(c.id, fecha) : kcs[c.id];
+  return calc(c, kc, eto, precip);
 }
 
 const CSS = `
@@ -77,7 +117,8 @@ export default function App() {
   const [grupo,   setGrupo]   = useState("todos");
   const [cultSel, setCultSel] = useState("todos");
   const [tab,     setTab]     = useState("tabla");
-  const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,c.kc])));
+  const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,kcDeFecha(c.id)])));
+  const [kcAuto,  setKcAuto]  = useState(true); // true = sigue fenología mensual
   const [selDate, setSelDate] = useState(null);
 
   const fetchWeather = useCallback(async()=>{
@@ -108,7 +149,7 @@ export default function App() {
 
   const volGrp = (row,ids)=>ids.reduce((a,id)=>{
     const c=CULTIVOS.find(x=>x.id===id); if(!c)return a;
-    return a+calc(c,kcs[id],row.eto,row.precip).reduce((b,t)=>b+t.volTotal,0);
+    const kcV=kcAuto?kcDeFecha(id,row.date):kcs[id]; return a+calc(c,kcV,row.eto,row.precip).reduce((b,t)=>b+t.volTotal,0);
   },0);
   const citIds=CULTIVOS.filter(c=>c.grupo==="citricos").map(c=>c.id);
   const pltIds=CULTIVOS.filter(c=>c.grupo==="paltos").map(c=>c.id);
@@ -217,17 +258,37 @@ export default function App() {
 
             {/* Kc */}
             <div style={{margin:"16px 16px 0",borderTop:"1px solid rgba(92,61,40,0.15)"}}/>
-            <div className="mono" style={{fontSize:9,color:"#9C7A5A",padding:"10px 16px 8px",letterSpacing:2.5}}>Kc CULTIVO</div>
+            <div className="mono" style={{fontSize:9,color:"#9C7A5A",padding:"10px 16px 6px",letterSpacing:2.5}}>Kc CULTIVO</div>
+            {/* Auto/Manual toggle */}
+            <div style={{padding:"0 16px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span className="mono" style={{fontSize:8,color:kcAuto?"#3D6B35":"#9C7A5A"}}>
+                {kcAuto?"● AUTO fenología":"○ MANUAL"}
+              </span>
+              <button onClick={()=>setKcAuto(p=>!p)}
+                style={{fontFamily:"'DM Mono',monospace",fontSize:8,background:kcAuto?"#3D6B35":"rgba(92,61,40,0.15)",color:kcAuto?"#fff":"#5C3D28",border:"none",padding:"3px 8px",borderRadius:10,cursor:"pointer"}}>
+                {kcAuto?"→ Manual":"→ Auto"}
+              </button>
+            </div>
             <div style={{padding:"0 16px"}}>
-              {visibles.map(c=>(
-                <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <span className="serif" style={{fontSize:13,color:c.color}}>{c.emoji} {c.label.split(" ")[0]}</span>
-                  <input className="kci" type="number" step="0.01" min="0.3" max="1.5" value={kcs[c.id]}
-                    onChange={e=>setKcs(p=>({...p,[c.id]:parseFloat(e.target.value)||p[c.id]}))}/>
-                </div>
-              ))}
-              <div className="mono" style={{fontSize:8,color:"#9C7A5A",lineHeight:1.8,marginTop:6}}>
-                Efic. goteo 90%<br/>Prec. efectiva 80%<br/>FAO Penman-Monteith
+              {visibles.map(c=>{
+                const kcMes=kcDeFecha(c.id);
+                const feno=fenoDeFecha(c.id);
+                return(
+                  <div key={c.id} style={{marginBottom:10,paddingBottom:8,borderBottom:"1px solid rgba(92,61,40,0.08)"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                      <span className="serif" style={{fontSize:13,color:c.color}}>{c.emoji} {c.label.split(" ")[0]}</span>
+                      {kcAuto
+                        ? <span className="mono" style={{fontSize:12,fontWeight:500,color:c.color}}>{kcMes.toFixed(2)}</span>
+                        : <input className="kci" type="number" step="0.01" min="0.3" max="1.5" value={kcs[c.id]}
+                            onChange={e=>setKcs(p=>({...p,[c.id]:parseFloat(e.target.value)||p[c.id]}))}/>
+                      }
+                    </div>
+                    <div className="mono" style={{fontSize:8,color:"#9C7A5A",lineHeight:1.4}}>{feno}</div>
+                  </div>
+                );
+              })}
+              <div className="mono" style={{fontSize:8,color:"#9C7A5A",lineHeight:1.8,marginTop:4}}>
+                {kcAuto?"Kc ajustado mensualmente\nsegún fenología Hijuelas\nFAO-56 + INIA Chile":"Ajuste manual activo\nEfic. 90% · Prec.ef. 80%"}<br/>FAO Penman-Monteith
               </div>
             </div>
           </div>
@@ -359,7 +420,7 @@ export default function App() {
                           <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>PROGRAMA DE RIEGO POR CULTIVO</div>
                           <div style={{display:"flex",flexDirection:"column",gap:10}}>
                             {visibles.map(c=>{
-                              const tR=calc(c,kcs[c.id],selectedRow.eto,selectedRow.precip);
+                              const tR=calcAuto(c,kcs,kcAuto,selectedRow.eto,selectedRow.precip,selectedRow.date);
                               const volTot=tR.reduce((a,t)=>a+t.volTotal,0);
                               const horTot=tR.reduce((a,t)=>a+t.horas,0);
                               return(
@@ -370,7 +431,7 @@ export default function App() {
                                       <div style={{width:4,height:38,background:c.color,borderRadius:2}}/>
                                       <div>
                                         <div className="fell" style={{fontSize:17,fontWeight:400,color:"#2C1810"}}>{c.emoji} {c.label}</div>
-                                        <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>{c.cultivo} · {c.area} ha · Kc {kcs[c.id]} · ETc {(selectedRow.eto*kcs[c.id]).toFixed(2)} mm</div>
+                                        <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>{c.cultivo} · {c.area} ha · Kc {kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id]} · ETc {(selectedRow.eto*(kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id])).toFixed(2)} mm</div>
                                       </div>
                                     </div>
                                     <div style={{display:"flex",gap:24,alignItems:"center"}}>
@@ -449,9 +510,9 @@ export default function App() {
                 <div className="serif" style={{fontSize:16,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{fmtFull(todayStr())} · ETo {todayRow.eto.toFixed(2)} mm/día</div>
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {visibles.map(c=>{
-                    const tR=calc(c,kcs[c.id],todayRow.eto,todayRow.precip);
+                    const tR=calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date);
                     const volTot=tR.reduce((a,t)=>a+t.volTotal,0),horTot=tR.reduce((a,t)=>a+t.horas,0);
-                    const ep=Math.min(todayRow.precip*0.8,todayRow.eto*kcs[c.id]);
+                    const ep=Math.min(todayRow.precip*0.8,todayRow.eto*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id]));
                     return(
                       <div key={c.id} className="card" style={{overflow:"hidden",border:`1px solid ${c.color}33`}}>
                         <div style={{padding:"14px 20px",background:`linear-gradient(135deg,${c.light}66,rgba(255,252,244,0))`,borderBottom:"1px solid rgba(92,61,40,0.1)",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
@@ -459,7 +520,7 @@ export default function App() {
                             <div style={{width:4,height:42,background:c.color,borderRadius:2}}/>
                             <div>
                               <div className="fell" style={{fontSize:19,fontWeight:400,color:"#2C1810"}}>{c.emoji} {c.label}</div>
-                              <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:3}}>{c.cultivo} · {c.area} ha · Kc {kcs[c.id]} · ETc {(todayRow.eto*kcs[c.id]).toFixed(2)} mm · Prec.Ef. {ep.toFixed(2)} mm</div>
+                              <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:3}}>{c.cultivo} · {c.area} ha · Kc {kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id]} · ETc {(todayRow.eto*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id])).toFixed(2)} mm · Prec.Ef. {ep.toFixed(2)} mm</div>
                             </div>
                           </div>
                           <div style={{display:"flex",gap:28}}>
@@ -530,8 +591,8 @@ export default function App() {
                   <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
                     {wRows.filter(r=>isFuture(r.date)).slice(0,3).map(r=>{
                       const ids=visibles.map(c=>c.id);
-                      const vol=ids.reduce((a,id)=>{const c=CULTIVOS.find(x=>x.id===id);return a+(c?calc(c,kcs[id],r.eto,r.precip).reduce((b,t)=>b+t.volTotal,0):0);},0);
-                      const hrs=ids.reduce((a,id)=>{const c=CULTIVOS.find(x=>x.id===id);return a+(c?calc(c,kcs[id],r.eto,r.precip).reduce((b,t)=>b+t.horas,0):0);},0);
+                      const vol=ids.reduce((a,id)=>{const c=CULTIVOS.find(x=>x.id===id);return a+(c?calcAuto(c,kcs,kcAuto,r.eto,r.precip,r.date).reduce((b,t)=>b+t.volTotal,0):0);},0);
+                      const hrs=ids.reduce((a,id)=>{const c=CULTIVOS.find(x=>x.id===id);return a+(c?calcAuto(c,kcs,kcAuto,r.eto,r.precip,r.date).reduce((b,t)=>b+t.horas,0):0);},0);
                       return(
                         <div key={r.date} className="card" style={{padding:"16px 20px"}}>
                           <div className="mono" style={{fontSize:9,color:"#4A7FA5",letterSpacing:1.5,marginBottom:8}}>{fmtShort(r.date).toUpperCase()} · PRONÓSTICO</div>
@@ -557,7 +618,7 @@ export default function App() {
                 <div className="serif" style={{fontSize:15,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{TOTAL_HA.toFixed(2)} ha totales · {new Date().toLocaleDateString("es-CL",{day:"numeric",month:"long",year:"numeric"})}</div>
                 {["citricos","paltos"].map(grp=>{
                   const cult=CULTIVOS.filter(c=>c.grupo===grp);
-                  const grpVol=cult.reduce((a,c)=>a+calc(c,kcs[c.id],todayRow.eto,todayRow.precip).reduce((b,t)=>b+t.volTotal,0),0);
+                  const grpVol=cult.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
                   const grpHa=cult.reduce((a,c)=>a+c.area,0);
                   const gc=grp==="citricos"?"#C2622D":"#3D6B35";
                   return(
@@ -568,14 +629,14 @@ export default function App() {
                       </div>
                       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
                         {cult.map(c=>{
-                          const tR=calc(c,kcs[c.id],todayRow.eto,todayRow.precip);
+                          const tR=calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date);
                           const vol=tR.reduce((a,t)=>a+t.volTotal,0),hrs=tR.reduce((a,t)=>a+t.horas,0);
                           return(
                             <div key={c.id} className="card" style={{padding:"14px 18px",background:`linear-gradient(135deg,${c.light}55,rgba(255,252,244,0.9))`}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                                 <div style={{width:3,height:32,background:c.color,borderRadius:1}}/>
                                 <div><div className="fell" style={{fontSize:15,color:"#2C1810"}}>{c.emoji} {c.label}</div>
-                                <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>{c.area} ha · ETc {(todayRow.eto*kcs[c.id]).toFixed(2)} mm</div></div>
+                                <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>{c.area} ha · ETc {(todayRow.eto*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id])).toFixed(2)} mm</div></div>
                               </div>
                               <div style={{display:"flex",justifyContent:"space-between"}}>
                                 <div><div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>VOLUMEN</div><span className="serif" style={{fontWeight:700,fontSize:22,color:c.color}}>{vol.toFixed(0)} m³</span></div>
@@ -595,9 +656,9 @@ export default function App() {
                   );
                 })}
                 {(()=>{
-                  const allVol=CULTIVOS.reduce((a,c)=>a+calc(c,kcs[c.id],todayRow.eto,todayRow.precip).reduce((b,t)=>b+t.volTotal,0),0);
-                  const cVol=CULTIVOS.filter(c=>c.grupo==="citricos").reduce((a,c)=>a+calc(c,kcs[c.id],todayRow.eto,todayRow.precip).reduce((b,t)=>b+t.volTotal,0),0);
-                  const pVol=CULTIVOS.filter(c=>c.grupo==="paltos").reduce((a,c)=>a+calc(c,kcs[c.id],todayRow.eto,todayRow.precip).reduce((b,t)=>b+t.volTotal,0),0);
+                  const allVol=CULTIVOS.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
+                  const cVol=CULTIVOS.filter(c=>c.grupo==="citricos").reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
+                  const pVol=CULTIVOS.filter(c=>c.grupo==="paltos").reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
                   return(
                     <div style={{padding:"20px 26px",background:"#2C1810",borderRadius:4,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
                       <div><div className="mono" style={{fontSize:10,letterSpacing:3,color:"rgba(242,235,217,0.38)",marginBottom:4}}>TOTAL PREDIO HOY</div>
@@ -632,7 +693,7 @@ export default function App() {
                         <div className="serif" style={{fontWeight:700,fontSize:20,color:c.color}}>{c.area} ha</div>
                       </div>
                       <div style={{padding:"12px 18px"}}>
-                        {[["Cultivo",c.cultivo],["Emisor",c.emisor],["Bomba",c.bomba],["Filtro",c.filtro],["Kc",`${c.kc} → ajust. ${kcs[c.id]}`]].map(([k,v])=>(
+                        {[["Cultivo",c.cultivo],["Emisor",c.emisor],["Bomba",c.bomba],["Filtro",c.filtro],["Kc",`FAO: ${KC_MENSUAL[c.id]?.join(" · ")||"—"}`]].map(([k,v])=>(
                           <div key={k} style={{display:"flex",gap:10,marginBottom:7}}>
                             <span className="mono" style={{fontSize:8,color:"#9C7A5A",minWidth:48,letterSpacing:0.5,paddingTop:2}}>{k.toUpperCase()}</span>
                             <span className="serif" style={{fontSize:13,color:"#5C3D28",lineHeight:1.35}}>{v}</span>
