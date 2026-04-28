@@ -10,8 +10,7 @@ const KC_MENSUAL = {
   lanelate:  [0.78,0.75,0.72,0.68,0.65,0.63,0.63,0.65,0.70,0.76,0.79,0.79],
   // Valencia/Midnight: cosecha ago-oct → similar pero desfasada ~1 mes
   valencia:  [0.77,0.74,0.71,0.68,0.65,0.63,0.63,0.65,0.70,0.75,0.78,0.78],
-  // Limón: producción casi continua, menor variación estacional
-  limon:     [0.73,0.70,0.68,0.65,0.63,0.61,0.61,0.63,0.67,0.72,0.74,0.74],
+
   // Paltos Hass: engrose ene-feb → cosecha mar-may → post-cos may-jul → floración ago-sep → cuaja oct → engrose nov-dic
   paltos_v:  [0.95,0.95,0.88,0.82,0.76,0.72,0.72,0.78,0.85,0.90,0.92,0.94],
   paltos_n12:[0.95,0.95,0.88,0.82,0.76,0.72,0.72,0.78,0.85,0.90,0.92,0.94],
@@ -21,7 +20,7 @@ const KC_MENSUAL = {
 const FENOLOGIA = {
   lanelate: ["Engrose avanzado","Engrose / maduración","Maduración","Maduración / inicio cosecha","Cosecha","Reposo post-cosecha","Cosecha / brotación","Brotación","Floración plena","Cuaja","Engrose inicial","Engrose"],
   valencia: ["Engrose avanzado","Engrose / maduración","Maduración","Maduración","Inicio cosecha","Reposo","Reposo","Brotación","Floración plena","Cuaja","Engrose inicial","Engrose"],
-  limon:    ["Producción / engrose","Producción","Producción","Post-cosecha parcial","Reposo relativo","Reposo","Floración","Floración / cuaja","Cuaja / producción","Producción","Producción","Engrose / producción"],
+
   paltos_v: ["Engrose máximo","Engrose máximo","Maduración / cosecha Hass","Cosecha plena","Post-cosecha","Reposo invernal","Reposo / floración incipiente","Floración plena","Cuaja","Crecimiento inicial fruto","Engrose","Engrose acelerado"],
   paltos_n12:["Engrose máximo","Engrose máximo","Maduración / cosecha Hass","Cosecha plena","Post-cosecha","Reposo invernal","Reposo / floración incipiente","Floración plena","Cuaja","Crecimiento inicial fruto","Engrose","Engrose acelerado"],
   paltos_n3: ["Engrose máximo","Engrose máximo","Maduración / cosecha Hass","Cosecha plena","Post-cosecha","Reposo invernal","Reposo / floración incipiente","Floración plena","Cuaja","Crecimiento inicial fruto","Engrose","Engrose acelerado"],
@@ -44,9 +43,7 @@ const CULTIVOS = [
   { id:"valencia",   grupo:"citricos", label:"Valencia / Midnight",   emoji:"🌕", cultivo:"5.00×2.00 m", area:11.99, ef:90, color:"#B8860B", light:"#FBF3D5", plano:"MELBACE4 · 2017",
     emisor:"QUILLAY 16.10 · 2 l/h · doble línea", bomba:"KSB 1125-100-160 · 40 HP", filtro:"Anillas PUELO 3\" × 6 ud.",
     turnos:[{id:"OP1",label:"Operación 1",ha:6.00,q:99.7,bloques:"1.1·2.1·3.1·4.1·5.1·6.1·7.1·8.1"},{id:"OP2",label:"Operación 2",ha:5.99,q:98.7,bloques:"9.1·10.1·11.1·12.1"}]},
-  { id:"limon",      grupo:"citricos", label:"Limón",                 emoji:"🍋", cultivo:"6.00×4.00 m", area:3.01,  ef:90, color:"#7A9E3B", light:"#EAF3D5", plano:"MELBACE2 · 2006",
-    emisor:"PCJ 16 / RAM 16D · 2–4 l/h", bomba:"VOGT N 629 · 15 HP", filtro:"SPIN KLIN 2\" × 3 ud.",
-    turnos:[{id:"S3",label:"Sector 3",ha:1.25,q:15.85,bloques:"12,1"},{id:"S4",label:"Sector 4",ha:1.76,q:19.22,bloques:"7,1"}]},
+
   { id:"paltos_v",   grupo:"paltos",   label:"Paltos Viejos",         emoji:"🥑", cultivo:"6.00×4.00 m", area:10.04, ef:90, color:"#3D6B35", light:"#DFF0D8", plano:"VER VIII · 2013",
     emisor:"RAM 16D · 2.3 l/h · doble línea", bomba:"KSB 65-200 · 25 HP", filtro:"Control de heladas exist.",
     turnos:[{id:"T1",label:"Turno 1",ha:2.59,q:56.6,bloques:"1.1·2.1·3.1"},{id:"T2",label:"Turno 2",ha:2.54,q:54.6,bloques:"4.1·5.1"},{id:"T3",label:"Turno 3",ha:2.75,q:58.7,bloques:"6.1·7.1·8.1"},{id:"T4",label:"Turno 4",ha:2.16,q:46.3,bloques:"9.1·10.1·11.1·12.1"}]},
@@ -54,8 +51,8 @@ const CULTIVOS = [
     emisor:"QUILLAY 16/10 · 2.0 l/h · doble línea", bomba:"KSB 65-160 · 20 HP", filtro:"Anillas PUELO 3\" × 4 ud.",
     turnos:[{id:"T1",label:"Turno 1",ha:3.21,q:53.6,bloques:"1.1·6.1·7.1·8.1·9.1"},{id:"T2",label:"Turno 2",ha:2.72,q:44.3,bloques:"2.1·3.1·4.1·5.1"}]},
   { id:"paltos_n3",  grupo:"paltos",   label:"Paltos Nuevos 3",       emoji:"🌿", cultivo:"6.00×4.00 m", area:2.77,  ef:90, color:"#2E7D52", light:"#D4EDDF", plano:"MELBACE2 y CH · 2024",
-    emisor:"BOLDO 16/10 · 2.0 l/h · 2 líneas", bomba:"VOGT 15HP + 10HP en serie", filtro:"Anillas PUELO 2×3 ud.",
-    turnos:[{id:"B1",label:"Bloque 1",ha:1.12,q:15.51,bloques:"Blq.1"},{id:"B2",label:"Bloque 2",ha:0.77,q:10.50,bloques:"Blq.2"},{id:"B3",label:"Bloque 3",ha:0.88,q:11.92,bloques:"Blq.3"}]},
+    emisor:"BOLDO 16/10 · 2.0 l/h · 2 líneas · 3 válvulas en paralelo", bomba:"VOGT 15HP + 10HP en serie", filtro:"Anillas PUELO 2×3 ud.",
+    turnos:[{id:"S1",label:"Sector único",ha:2.77,q:37.93,bloques:"Válvula 1 · Válvula 2 · Válvula 3 (paralelo)"}]},
 ];
 
 const TOTAL_HA = CULTIVOS.reduce((a,c)=>a+c.area,0);
