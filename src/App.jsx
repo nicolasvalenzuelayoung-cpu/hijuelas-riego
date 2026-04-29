@@ -117,6 +117,8 @@ export default function App() {
   const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,kcDeFecha(c.id)])));
   const [kcAuto,  setKcAuto]  = useState(true); // true = sigue fenología mensual
   const [selDate, setSelDate] = useState(null);
+  // ── Gráficos ──────────────────────────────────────────────
+  const [chartCult, setChartCult] = useState("todos");
   // ── Registro real ──────────────────────────────────────────
   // registro[date][cultivoId_sectorId] = { m3Real, ec, ph, notas }
   const [registro, setRegistro] = useState(()=>{
@@ -413,7 +415,7 @@ export default function App() {
           ))}
         </div>
         <div style={{width:1,height:26,background:"rgba(92,61,40,0.25)"}}/>
-        {[["tabla","📅 Tabla Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
+        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["graficos","📈 Gráficos"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
           <button key={k} className={`tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -872,6 +874,385 @@ export default function App() {
                 })()}
               </div>
             )}
+
+            {/* ──── GRÁFICOS ──── */}
+            {tab==="graficos"&&(()=>{
+              const past = wRows.filter(r=>!isFuture(r.date));
+              const all  = wRows;
+              const cultF = chartCult==="todos" ? CULTIVOS : CULTIVOS.filter(c=>c.id===chartCult);
+
+              // ── Helpers SVG ──────────────────────────────────────
+              const W=900, BAR_H=320, LINE_H=240, KC_H=200;
+              const PAD={t:30,r:24,b:48,l:56};
+              const innerW = W - PAD.l - PAD.r;
+
+              const scale = (val,min,max,h) => h - PAD.t - PAD.b - ((val-min)/(max-min||1))*(h-PAD.t-PAD.b);
+              const barX  = (i,n,w) => PAD.l + i*(w/n);
+              const barW  = (n,w,gap=0.28) => (w/n)*(1-gap);
+
+              const GridLines = ({yVals, h, fmt=v=>v, color="rgba(92,61,40,0.12)"})=>(
+                <>
+                  {yVals.map(v=>{
+                    const y=PAD.t+(h-PAD.t-PAD.b)*(1-(v-yVals[0])/(yVals[yVals.length-1]-yVals[0]||1));
+                    return(
+                      <g key={v}>
+                        <line x1={PAD.l} x2={W-PAD.r} y1={y} y2={y} stroke={color} strokeWidth={1} strokeDasharray="4,4"/>
+                        <text x={PAD.l-6} y={y+4} textAnchor="end" fontSize={9} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{fmt(v)}</text>
+                      </g>
+                    );
+                  })}
+                </>
+              );
+
+              const XLabels = ({rows, h}) => rows.map((r,i)=>{
+                const x = PAD.l + (i+0.5)*(innerW/rows.length);
+                const hoy=isToday(r.date), fut=isFuture(r.date);
+                return(
+                  <g key={r.date}>
+                    {hoy&&<rect x={PAD.l+i*(innerW/rows.length)} width={innerW/rows.length} y={PAD.t} height={h-PAD.t-PAD.b} fill="rgba(184,134,11,0.04)"/>}
+                    {fut&&<rect x={PAD.l+i*(innerW/rows.length)} width={innerW/rows.length} y={PAD.t} height={h-PAD.t-PAD.b} fill="rgba(74,127,165,0.04)"/>}
+                    <text x={x} y={h-PAD.b+16} textAnchor="middle" fontSize={9} fill={hoy?"#C2622D":fut?"#4A7FA5":"#9C7A5A"} fontFamily="'DM Mono',monospace">
+                      {fmtShort(r.date).split(",")[0]}
+                    </text>
+                    {hoy&&<text x={x} y={h-PAD.b+26} textAnchor="middle" fontSize={8} fill="#C2622D" fontFamily="'DM Mono',monospace">HOY</text>}
+                  </g>
+                );
+              });
+
+              // ── CHART 1: ETo + ETc por cultivo + Lluvia ──────────
+              const chart1Data = all.map(r=>{
+                const cultEtc = cultF.reduce((a,c)=>{
+                  const kc=kcAuto?kcDeFecha(c.id,r.date):kcs[c.id];
+                  return Math.max(a, r.eto*kc);
+                },0);
+                return {...r, maxEtc:cultEtc};
+              });
+              const eto_max = Math.ceil(Math.max(...all.map(r=>r.eto),0.1)*1.3*10)/10;
+              const etoTicks = [0,1,2,3,4,5,6].filter(v=>v<=eto_max+1);
+
+              // ── CHART 2: Volumen calculado vs real (solo pasados) ──
+              const chart2Data = past.map(r=>{
+                const calc_ = cultF.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,r.eto,r.precip,r.date).reduce((b,t)=>b+t.volTotal,0),0);
+                const real_ = cultF.reduce((a,c)=>a+c.turnos.reduce((b,t)=>{
+                  const v=parseFloat(getReg(r.date,c.id,t.id,"m3Real")||"");
+                  return b+(isNaN(v)?0:v);
+                },0),0);
+                return {...r, calc:calc_, real:real_, hasReal:real_>0};
+              });
+              const vol_max = Math.ceil(Math.max(...chart2Data.map(r=>Math.max(r.calc,r.real)),10)*1.15/100)*100;
+              const volTicks = [0,vol_max*0.25,vol_max*0.5,vol_max*0.75,vol_max].map(v=>Math.round(v));
+
+              // ── CHART 3: Déficit acumulado ─────────────────────────
+              let acumCalc=0,acumReal=0;
+              const chart3Data = past.map(r=>{
+                const calc_=cultF.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,r.eto,r.precip,r.date).reduce((b,t)=>b+t.volTotal,0),0);
+                const real_=cultF.reduce((a,c)=>a+c.turnos.reduce((b,t)=>{const v=parseFloat(getReg(r.date,c.id,t.id,"m3Real")||"");return b+(isNaN(v)?0:v);},0),0);
+                acumCalc+=calc_; acumReal+=real_;
+                return {...r, acumCalc, acumReal, deficit:acumCalc-acumReal};
+              });
+              const hasRealData = chart3Data.some(r=>r.acumReal>0);
+              const acum_max = Math.max(...chart3Data.map(r=>Math.max(r.acumCalc,r.acumReal)),100);
+              const acumTicks = [0,Math.round(acum_max*0.33),Math.round(acum_max*0.66),Math.round(acum_max)];
+
+              // ── CHART 4: Kc anual ─────────────────────────────────
+              const meses=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+              const mesActual=new Date().getMonth();
+              const kcLines = cultF.map(c=>({
+                c,
+                pts: meses.map((_,m)=>KC_MENSUAL[c.id]?.[m]??0.80),
+              }));
+              const kc_min=0.55, kc_max=1.05;
+
+              // ── SVG path builder ──────────────────────────────────
+              const linePath = (pts, w, h, minV, maxV) => pts.map((v,i)=>{
+                const x=PAD.l+i*(innerW/(pts.length-1));
+                const y=PAD.t+(h-PAD.t-PAD.b)*(1-(v-minV)/(maxV-minV||1));
+                return `${i===0?"M":"L"}${x},${y}`;
+              }).join(" ");
+
+              const areaPath = (pts, w, h, minV, maxV) => {
+                const line=pts.map((v,i)=>{
+                  const x=PAD.l+i*(innerW/(pts.length-1));
+                  const y=PAD.t+(h-PAD.t-PAD.b)*(1-(v-minV)/(maxV-minV||1));
+                  return `${i===0?"M":"L"}${x},${y}`;
+                }).join(" ");
+                const baseY=PAD.t+(h-PAD.t-PAD.b);
+                const x0=PAD.l, xN=PAD.l+innerW;
+                return `${line} L${xN},${baseY} L${x0},${baseY} Z`;
+              };
+
+              const ChartCard = ({title,sub,children,h})=>(
+                <div className="card" style={{padding:"0 0 8px",overflow:"hidden",marginBottom:20}}>
+                  <div style={{padding:"14px 20px 10px",borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
+                    <div className="fell" style={{fontSize:18,fontWeight:400,color:"#2C1810"}}>{title}</div>
+                    {sub&&<div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2,letterSpacing:0.5}}>{sub}</div>}
+                  </div>
+                  <div style={{overflowX:"auto",padding:"10px 0 0"}}>
+                    <svg width="100%" viewBox={`0 0 ${W} ${h}`} style={{display:"block",maxWidth:"100%"}} preserveAspectRatio="xMidYMid meet">
+                      {children}
+                    </svg>
+                  </div>
+                </div>
+              );
+
+              return(
+                <div className="fade">
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+                    <div>
+                      <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:2}}>Gráficos del Predio</h2>
+                      <div className="serif" style={{fontSize:13,color:"#9C7A5A",fontStyle:"italic"}}>Clima · Riego calculado · Riego real · Fenología</div>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      <button className={`gbtn ${chartCult==="todos"?"on":""}`} onClick={()=>setChartCult("todos")}>Todo el predio</button>
+                      {CULTIVOS.map(c=>(
+                        <button key={c.id} className={`gbtn ${chartCult===c.id?"on":""}`}
+                          style={{borderColor:chartCult===c.id?"transparent":c.color+"55",color:chartCult===c.id?"#F2EBD9":c.color}}
+                          onClick={()=>setChartCult(c.id)}>
+                          {c.emoji} {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ── CHART 1: ETo + ETc + Lluvia ── */}
+                  <ChartCard
+                    title="Evapotranspiración y Lluvia"
+                    sub={`ETo DIARIA (barras) · ETc POR CULTIVO (líneas) · PRECIPITACIÓN (barras azules) · ${all.length} días`}
+                    h={BAR_H}>
+                    <GridLines yVals={etoTicks} h={BAR_H} fmt={v=>v+"mm"}/>
+                    <XLabels rows={all} h={BAR_H}/>
+                    {/* Axis */}
+                    <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={BAR_H-PAD.b} stroke="rgba(92,61,40,0.25)" strokeWidth={1}/>
+                    <line x1={PAD.l} x2={W-PAD.r} y1={BAR_H-PAD.b} y2={BAR_H-PAD.b} stroke="rgba(92,61,40,0.25)" strokeWidth={1}/>
+                    {/* ETo bars */}
+                    {all.map((r,i)=>{
+                      const bw=barW(all.length,innerW,0.35);
+                      const x=barX(i,all.length,innerW)+PAD.l;
+                      const h_=((r.eto/eto_max))*(BAR_H-PAD.t-PAD.b);
+                      const y=BAR_H-PAD.b-h_;
+                      const hoy=isToday(r.date);
+                      return<rect key={r.date} x={x} y={y} width={bw} height={h_}
+                        fill={hoy?"#C2622D":"rgba(194,98,45,0.45)"} rx={2}/>;
+                    })}
+                    {/* Lluvia bars (overlay, blue) */}
+                    {all.filter(r=>r.precip>0).map((r,_)=>{
+                      const i=all.indexOf(r);
+                      const bw=barW(all.length,innerW,0.35);
+                      const x=barX(i,all.length,innerW)+PAD.l;
+                      const h_=((r.precip/eto_max))*(BAR_H-PAD.t-PAD.b);
+                      const y=BAR_H-PAD.b-h_;
+                      return<rect key={"p"+r.date} x={x} y={y} width={bw} height={h_}
+                        fill="rgba(74,127,165,0.55)" rx={2} opacity={0.8}/>;
+                    })}
+                    {/* ETc lines per cultivo */}
+                    {cultF.map(c=>{
+                      const pts=all.map(r=>r.eto*(kcAuto?kcDeFecha(c.id,r.date):kcs[c.id]));
+                      const bw=barW(all.length,innerW,0.35);
+                      const path=pts.map((v,i)=>{
+                        const x=barX(i,all.length,innerW)+PAD.l+bw/2;
+                        const y=BAR_H-PAD.b-((v/eto_max))*(BAR_H-PAD.t-PAD.b);
+                        return`${i===0?"M":"L"}${x},${y}`;
+                      }).join(" ");
+                      return(
+                        <g key={c.id}>
+                          <path d={path} fill="none" stroke={c.color} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" opacity={0.9}/>
+                          {pts.map((v,i)=>{
+                            const x=barX(i,all.length,innerW)+PAD.l+bw/2;
+                            const y=BAR_H-PAD.b-((v/eto_max))*(BAR_H-PAD.t-PAD.b);
+                            return<circle key={i} cx={x} cy={y} r={3} fill={c.color} opacity={0.9}/>;
+                          })}
+                        </g>
+                      );
+                    })}
+                    {/* ETo value labels on bars */}
+                    {all.map((r,i)=>{
+                      const bw=barW(all.length,innerW,0.35);
+                      const x=barX(i,all.length,innerW)+PAD.l+bw/2;
+                      const h_=((r.eto/eto_max))*(BAR_H-PAD.t-PAD.b);
+                      const y=BAR_H-PAD.b-h_-5;
+                      return<text key={r.date} x={x} y={y} textAnchor="middle" fontSize={8.5}
+                        fill={isToday(r.date)?"#C2622D":"rgba(92,61,40,0.7)"} fontFamily="'DM Mono',monospace"
+                        fontWeight={isToday(r.date)?700:400}>{r.eto.toFixed(1)}</text>;
+                    })}
+                    {/* Legend */}
+                    {[{c:"rgba(194,98,45,0.7)",l:"ETo"},{c:"rgba(74,127,165,0.6)",l:"Lluvia"},...cultF.map(c=>({c:c.color,l:`ETc ${c.label.split(" ")[0]}`,line:true}))].map((leg,i)=>(
+                      <g key={i} transform={`translate(${PAD.l+i*100},${PAD.t-10})`}>
+                        {leg.line
+                          ? <line x1={0} y1={5} x2={16} y2={5} stroke={leg.c} strokeWidth={2.5}/>
+                          : <rect x={0} y={0} width={12} height={10} fill={leg.c} rx={1}/>}
+                        <text x={leg.line?20:15} y={10} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">{leg.l}</text>
+                      </g>
+                    ))}
+                  </ChartCard>
+
+                  {/* ── CHART 2: m³ calculado vs real ── */}
+                  <ChartCard
+                    title="Riego Calculado vs Real Aplicado"
+                    sub={hasRealData?"CALCULADO FAO (barras claras) · REAL OLIVEPLUS (barras sólidas) · datos históricos":"Sin datos reales aún — importa desde OlivePlus en la pestaña Registro Real"}
+                    h={BAR_H}>
+                    <GridLines yVals={volTicks} h={BAR_H} fmt={v=>v+"m³"}/>
+                    <XLabels rows={past} h={BAR_H}/>
+                    <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={BAR_H-PAD.b} stroke="rgba(92,61,40,0.25)" strokeWidth={1}/>
+                    <line x1={PAD.l} x2={W-PAD.r} y1={BAR_H-PAD.b} y2={BAR_H-PAD.b} stroke="rgba(92,61,40,0.25)" strokeWidth={1}/>
+                    {chart2Data.map((r,i)=>{
+                      const totalBw=innerW/past.length*0.8;
+                      const xBase=PAD.l+i*(innerW/past.length)+(innerW/past.length)*0.1;
+                      const barPair=totalBw/2-1;
+                      const hCalc=((r.calc/vol_max||0))*(BAR_H-PAD.t-PAD.b);
+                      const hReal=r.hasReal?((r.real/vol_max||0))*(BAR_H-PAD.t-PAD.b):0;
+                      const hoy=isToday(r.date);
+                      const pct=r.hasReal&&r.calc>0?(r.real/r.calc*100):null;
+                      return(
+                        <g key={r.date}>
+                          {/* Calc bar */}
+                          <rect x={xBase} y={BAR_H-PAD.b-hCalc} width={barPair} height={hCalc}
+                            fill={hoy?"rgba(184,134,11,0.5)":"rgba(184,134,11,0.25)"} rx={2}
+                            stroke="#B8860B" strokeWidth={0.5}/>
+                          {/* Real bar */}
+                          {r.hasReal&&<rect x={xBase+barPair+2} y={BAR_H-PAD.b-hReal} width={barPair} height={hReal}
+                            fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} rx={2} opacity={0.85}/>}
+                          {/* % label */}
+                          {pct!=null&&<text x={xBase+barPair+1} y={BAR_H-PAD.b-Math.max(hCalc,hReal)-5}
+                            textAnchor="middle" fontSize={8} fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}
+                            fontFamily="'DM Mono',monospace" fontWeight={600}>{pct.toFixed(0)}%</text>}
+                          {/* Calc value */}
+                          <text x={xBase+barPair/2} y={BAR_H-PAD.b-hCalc-5} textAnchor="middle" fontSize={7.5}
+                            fill="rgba(184,134,11,0.7)" fontFamily="'DM Mono',monospace">{r.calc.toFixed(0)}</text>
+                        </g>
+                      );
+                    })}
+                    <g transform={`translate(${PAD.l},${PAD.t-10})`}>
+                      <rect x={0} y={0} width={12} height={10} fill="rgba(184,134,11,0.4)" stroke="#B8860B" strokeWidth={0.5} rx={1}/>
+                      <text x={16} y={9} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Calculado (m³)</text>
+                      <rect x={120} y={0} width={12} height={10} fill="#3D6B35" rx={1}/>
+                      <text x={136} y={9} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Real OlivePlus (m³)</text>
+                      <text x={280} y={9} fontSize={8.5} fill="#9C7A5A" fontFamily="'DM Mono',monospace">% = eficiencia de riego</text>
+                    </g>
+                  </ChartCard>
+
+                  {/* ── CHART 3: Acumulados + Déficit ── */}
+                  {hasRealData&&(
+                    <ChartCard
+                      title="Acumulados: Calculado vs Real"
+                      sub="ÁREA NARANJA = riego calculado acumulado · ÁREA VERDE = real aplicado · BRECHA = déficit hídrico acumulado"
+                      h={LINE_H+40}>
+                      <GridLines yVals={acumTicks} h={LINE_H+40} fmt={v=>v+"m³"}/>
+                      <XLabels rows={past} h={LINE_H+40}/>
+                      <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={LINE_H+40-PAD.b} stroke="rgba(92,61,40,0.25)" strokeWidth={1}/>
+                      <line x1={PAD.l} x2={W-PAD.r} y1={LINE_H+40-PAD.b} y2={LINE_H+40-PAD.b} stroke="rgba(92,61,40,0.25)" strokeWidth={1}/>
+                      {/* Calc area */}
+                      {chart3Data.length>1&&(
+                        <path d={areaPath(chart3Data.map(r=>r.acumCalc), W, LINE_H+40, 0, acum_max)}
+                          fill="rgba(184,134,11,0.15)" stroke="#B8860B" strokeWidth={2}/>
+                      )}
+                      {/* Real area */}
+                      {chart3Data.length>1&&(
+                        <path d={areaPath(chart3Data.map(r=>r.acumReal), W, LINE_H+40, 0, acum_max)}
+                          fill="rgba(61,107,53,0.25)" stroke="#3D6B35" strokeWidth={2.5}/>
+                      )}
+                      {/* Deficit fill */}
+                      {chart3Data.length>1&&(()=>{
+                        const topPts=chart3Data.map((r,i)=>{
+                          const x=PAD.l+i*(innerW/(chart3Data.length-1));
+                          const y=PAD.t+(LINE_H+40-PAD.t-PAD.b)*(1-(r.acumCalc/acum_max||0));
+                          return`${i===0?"M":"L"}${x},${y}`;
+                        }).join(" ");
+                        const botPts=chart3Data.map((r,i)=>{
+                          const x=PAD.l+i*(innerW/(chart3Data.length-1));
+                          const y=PAD.t+(LINE_H+40-PAD.t-PAD.b)*(1-(r.acumReal/acum_max||0));
+                          return`L${x},${y}`;
+                        }).reverse().join(" ");
+                        return<path d={`${topPts} ${botPts} Z`} fill="rgba(139,0,0,0.08)"/>;
+                      })()}
+                      {/* Last point labels */}
+                      {chart3Data.length>0&&(()=>{
+                        const last=chart3Data[chart3Data.length-1];
+                        const xi=PAD.l+innerW;
+                        const yCalc=PAD.t+(LINE_H+40-PAD.t-PAD.b)*(1-(last.acumCalc/acum_max||0));
+                        const yReal=PAD.t+(LINE_H+40-PAD.t-PAD.b)*(1-(last.acumReal/acum_max||0));
+                        return(
+                          <g>
+                            <text x={xi-4} y={yCalc-6} textAnchor="end" fontSize={9} fill="#B8860B" fontFamily="'DM Mono',monospace" fontWeight={600}>{last.acumCalc.toFixed(0)} m³</text>
+                            <text x={xi-4} y={yReal+14} textAnchor="end" fontSize={9} fill="#3D6B35" fontFamily="'DM Mono',monospace" fontWeight={600}>{last.acumReal.toFixed(0)} m³</text>
+                            <text x={xi-4} y={(yCalc+yReal)/2+4} textAnchor="end" fontSize={9} fill="#8B0000" fontFamily="'DM Mono',monospace">Déficit: {last.deficit.toFixed(0)} m³</text>
+                          </g>
+                        );
+                      })()}
+                      <g transform={`translate(${PAD.l},${PAD.t-10})`}>
+                        <rect x={0} y={0} width={12} height={8} fill="rgba(184,134,11,0.4)" rx={1}/>
+                        <text x={16} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Calculado acumulado</text>
+                        <rect x={160} y={0} width={12} height={8} fill="rgba(61,107,53,0.5)" rx={1}/>
+                        <text x={176} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Real acumulado</text>
+                        <rect x={290} y={0} width={12} height={8} fill="rgba(139,0,0,0.15)" rx={1}/>
+                        <text x={306} y={8} fontSize={8.5} fill="#8B0000" fontFamily="'DM Mono',monospace">Déficit acumulado</text>
+                      </g>
+                    </ChartCard>
+                  )}
+
+                  {/* ── CHART 4: Kc anual fenológico ── */}
+                  <ChartCard
+                    title="Curva Kc Fenológico Anual · Hijuelas 32°S"
+                    sub="Coeficiente de cultivo mensual · FAO-56 + INIA Chile · el punto rojo indica el mes actual"
+                    h={KC_H+60}>
+                    <GridLines yVals={[0.6,0.7,0.8,0.9,1.0]} h={KC_H+60} fmt={v=>v.toFixed(1)}/>
+                    {/* Month labels */}
+                    {meses.map((m,i)=>{
+                      const x=PAD.l+i*(innerW/11);
+                      const isNow=i===mesActual;
+                      return(
+                        <g key={m}>
+                          {isNow&&<rect x={x-innerW/22} width={innerW/11} y={PAD.t} height={KC_H+60-PAD.t-PAD.b} fill="rgba(194,98,45,0.08)"/>}
+                          <text x={x} y={KC_H+60-PAD.b+14} textAnchor="middle" fontSize={9}
+                            fill={isNow?"#C2622D":"#9C7A5A"} fontFamily="'DM Mono',monospace"
+                            fontWeight={isNow?700:400}>{m}</text>
+                        </g>
+                      );
+                    })}
+                    <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={KC_H+60-PAD.b} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
+                    <line x1={PAD.l} x2={W-PAD.r} y1={KC_H+60-PAD.b} y2={KC_H+60-PAD.b} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
+                    {/* Kc lines per cultivo */}
+                    {cultF.map(c=>{
+                      const pts=KC_MENSUAL[c.id]||[];
+                      if(!pts.length) return null;
+                      const path=pts.map((v,i)=>{
+                        const x=PAD.l+i*(innerW/11);
+                        const y=PAD.t+(KC_H+60-PAD.t-PAD.b)*(1-(v-kc_min)/(kc_max-kc_min));
+                        return`${i===0?"M":"L"}${x},${y}`;
+                      }).join(" ");
+                      return(
+                        <g key={c.id}>
+                          <path d={path} fill="none" stroke={c.color} strokeWidth={2.5} strokeLinejoin="round" opacity={0.9}/>
+                          {pts.map((v,i)=>{
+                            const x=PAD.l+i*(innerW/11);
+                            const y=PAD.t+(KC_H+60-PAD.t-PAD.b)*(1-(v-kc_min)/(kc_max-kc_min));
+                            const isNow=i===mesActual;
+                            return(
+                              <g key={i}>
+                                <circle cx={x} cy={y} r={isNow?6:3} fill={isNow?"#C2622D":c.color} opacity={0.9}/>
+                                {isNow&&<text x={x} y={y-10} textAnchor="middle" fontSize={9}
+                                  fill="#C2622D" fontFamily="'DM Mono',monospace" fontWeight={700}>{v.toFixed(2)}</text>}
+                              </g>
+                            );
+                          })}
+                          {/* End label */}
+                          <text x={PAD.l+11*(innerW/11)+4} y={PAD.t+(KC_H+60-PAD.t-PAD.b)*(1-(pts[11]-kc_min)/(kc_max-kc_min))+4}
+                            fontSize={8.5} fill={c.color} fontFamily="'Cormorant Garamond',serif" fontWeight={600}>
+                            {c.emoji}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    {/* Fenología label for current month */}
+                    {cultF.slice(0,1).map(c=>(
+                      <text key={c.id} x={W/2} y={PAD.t-8} textAnchor="middle" fontSize={9}
+                        fill="#C2622D" fontFamily="'Cormorant Garamond',serif" fontStyle="italic">
+                        {meses[mesActual]} · {fenoDeFecha(c.id)}
+                      </text>
+                    ))}
+                  </ChartCard>
+                </div>
+              );
+            })()}
 
             {/* ──── REGISTRO REAL ──── */}
             {tab==="registro"&&(
