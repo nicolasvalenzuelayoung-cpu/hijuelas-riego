@@ -145,76 +145,177 @@ export default function App() {
   const getReg = (fecha, cultId, sectorId, campo) =>
     registro?.[fecha]?.[`${cultId}__${sectorId}`]?.[campo] ?? "";
 
-  // ── CSV import ────────────────────────────────────────────
+  // ── OlivePlus equipment → cultivo IDs mapping ─────────────
+  // Clave: fragmento del nombre en OlivePlus (minúsculas, sin acento)
+  // Valor: array de IDs de CULTIVOS que cubre ese equipo
+  const OLIVE_MAP = [
+    { match: /melbace2v4|citrico.*melbace2|lanelate/i,   ids: ["lanelate"] },
+    { match: /melbace4v4|valencia/i,                      ids: ["valencia"] },
+    { match: /melbace1|paltos.*melbace1/i,                ids: ["paltos_v","paltos_n12","paltos_n3"] },
+    { match: /paltos.*viej|viej.*palto/i,                 ids: ["paltos_v"] },
+    { match: /paltos.*nuev.*1.*2|paltos.*n1|melbace3/i,   ids: ["paltos_n12"] },
+    { match: /paltos.*nuev.*3|paltos.*n3/i,               ids: ["paltos_n3"] },
+    { match: /control.*helada/i,                          ids: [] }, // solo monitoreo, ignorar
+  ];
+
+  // Distribuye m³ totales de un equipo entre sus cultivos y sectores
+  // proporcionalmente por hectárea
+  const distribuirM3 = (ids, m3Total, fecha, notas) => {
+    const cultivos = ids.map(id=>CULTIVOS.find(c=>c.id===id)).filter(Boolean);
+    const haTotal = cultivos.reduce((a,c)=>a+c.area,0);
+    if(haTotal===0) return {};
+    const result = {};
+    for(const c of cultivos){
+      const m3Cultivo = m3Total * (c.area/haTotal);
+      const haTurnos = c.turnos.reduce((a,t)=>a+t.ha,0);
+      for(const t of c.turnos){
+        const key = `${c.id}__${t.id}`;
+        result[key] = {
+          m3Real: (m3Cultivo * (t.ha/haTurnos)).toFixed(1),
+          ec: "", ph: "",
+          notas: notas||"OlivePlus",
+        };
+      }
+    }
+    return result;
+  };
+
+  // ── Parser principal — detecta formato OlivePlus o CSV genérico ──
   const parseCSV = (text) => {
-    const lines = text.trim().split(/\r?\n/);
+    const lines = text.trim().split(/\r?\n/).filter(l=>l.trim());
     if(lines.length < 2) return { ok:false, msg:"El archivo no tiene datos suficientes." };
+
+    // Detectar si es formato OlivePlus (tiene columna "Nombre" + "Volumen" sin fecha)
+    const hdr0 = lines[0].toLowerCase();
+    const hdr1 = lines.length>1 ? lines[1].toLowerCase() : "";
+    const isOlivePlus = (hdr0.includes("riego acumulado")||hdr0.includes("olive")) ||
+                        (hdr1.includes("nombre")&&hdr1.includes("volumen")&&!hdr1.includes("fecha"));
+
+    // ── Formato OlivePlus acumulado (sin fecha diaria) ──────
+    if(isOlivePlus){
+      // Buscar línea de encabezado (contiene "Nombre")
+      let hdrIdx = lines.findIndex(l=>l.toLowerCase().includes("nombre")&&l.toLowerCase().includes("volumen"));
+      if(hdrIdx<0) return { ok:false, msg:"No se encontró el encabezado de OlivePlus.\nEspero una columna 'Nombre' y una 'Volumen'." };
+      const header = lines[hdrIdx].split(/\t/).map(h=>h.trim().toLowerCase()
+        .replace(/[áàä]/g,"a").replace(/[éèë]/g,"e").replace(/[íìï]/g,"i")
+        .replace(/[óòö]/g,"o").replace(/[úùü]/g,"u").replace(/\s+/g,"_").replace(/[():]/g,""));
+      const iNombre = header.findIndex(h=>h==="nombre");
+      const iVol    = header.findIndex(h=>h==="volumen"||h==="vol");
+      const iEC     = header.findIndex(h=>/^ec/.test(h)||/conductividad/.test(h));
+      const iPH     = header.findIndex(h=>h==="ph");
+      if(iNombre<0||iVol<0) return { ok:false, msg:`Columnas encontradas: ${header.join(", ")}\nNecesito al menos 'Nombre' y 'Volumen'.` };
+
+      // Extraer rango de fechas del título (ej: "22/04/2026 - 29/04/2026")
+      let fechaImport = todayStr();
+      const tituloFecha = lines.slice(0,hdrIdx).join(" ");
+      const mFecha = tituloFecha.match(/(\d{2}\/\d{2}\/\d{4})\s*[-–]\s*(\d{2}\/\d{2}\/\d{4})/);
+      if(mFecha){
+        const [d,mo,y] = mFecha[2].split("/");
+        fechaImport = `${y}-${mo}-${d}`;
+      }
+
+      let imported=0; const newReg={};
+      for(let i=hdrIdx+1;i<lines.length;i++){
+        const cols = lines[i].split(/\t/);
+        if(cols.length<2) continue;
+        const nombre = cols[iNombre]?.trim()||"";
+        const m3 = parseFloat((cols[iVol]?.trim()||"0").replace(",","."));
+        if(!nombre||isNaN(m3)||m3===0) continue;
+
+        const rule = OLIVE_MAP.find(r=>r.match.test(nombre));
+        if(!rule||rule.ids.length===0) continue;
+
+        const notas = `OlivePlus: ${nombre}`;
+        const dist = distribuirM3(rule.ids, m3, fechaImport, notas);
+        if(!newReg[fechaImport]) newReg[fechaImport]={};
+        Object.assign(newReg[fechaImport], dist);
+        imported += Object.keys(dist).length;
+      }
+      if(imported===0)
+        return { ok:false, msg:"No se pudo importar ninguna fila.\nEquipos en archivo: "+
+          lines.slice(hdrIdx+1).map(l=>l.split("\t")[0]).filter(Boolean).join(", ")+
+          "\nEquipos reconocidos: Citricos MELBACE2V4 · Naranjos Valencia MELBACE4V4 · Paltos MELBACE1" };
+
+      setRegistro(p=>{ const m={...p}; for(const[d,v] of Object.entries(newReg)) m[d]={...m[d],...v}; return m; });
+      return { ok:true, msg:`✅ ${imported} sectores importados desde OlivePlus (${fechaImport}).\nVolumen distribuido proporcionalmente por hectárea entre sectores.` };
+    }
+
+    // ── Formato CSV genérico con columna fecha ──────────────
     const header = lines[0].split(/[;,\t]/).map(h=>h.trim().toLowerCase()
-      .replace(/[áà]/g,"a").replace(/[éè]/g,"e").replace(/[íì]/g,"i")
-      .replace(/[óò]/g,"o").replace(/[úù]/g,"u").replace(/\s+/g,"_"));
-
-    // Try to find date, sector, m3 columns automatically
-    const iDate   = header.findIndex(h=>/fecha|date|dia/.test(h));
-    const iSec    = header.findIndex(h=>/sector|turno|bloque|nombre/.test(h));
-    const iM3     = header.findIndex(h=>/m3|m³|volumen|vol|caudal_acum|agua/.test(h));
-    const iEC     = header.findIndex(h=>/ec|conductividad/.test(h));
-    const iPH     = header.findIndex(h=>/ph/.test(h));
-    const iNotas  = header.findIndex(h=>/nota|observ|comment/.test(h));
-
+      .replace(/[áàä]/g,"a").replace(/[éèë]/g,"e").replace(/[íìï]/g,"i")
+      .replace(/[óòö]/g,"o").replace(/[úùü]/g,"u").replace(/\s+/g,"_"));
+    const iDate  = header.findIndex(h=>/fecha|date|dia/.test(h));
+    const iSec   = header.findIndex(h=>/sector|turno|bloque|nombre|equipo/.test(h));
+    const iM3    = header.findIndex(h=>/^m3|^m³|volumen|^vol|agua/.test(h));
+    const iEC    = header.findIndex(h=>/^ec/.test(h));
+    const iPH    = header.findIndex(h=>h==="ph");
+    const iNotas = header.findIndex(h=>/nota|observ/.test(h));
     if(iDate<0||iSec<0||iM3<0)
-      return { ok:false, msg:`No se encontraron columnas requeridas.\nColumnas detectadas: ${header.join(", ")}\nNecesito columnas con: fecha, sector, m3 (o volumen)` };
+      return { ok:false, msg:`Columnas detectadas: ${header.join(", ")}\nNecesito: fecha · sector (o nombre) · m3 (o volumen)` };
 
-    let imported = 0;
-    const newReg = {};
+    let imported=0; const newReg={};
     for(let i=1;i<lines.length;i++){
       const cols = lines[i].split(/[;,\t]/);
-      if(cols.length < 3) continue;
+      if(cols.length<3) continue;
       const rawDate = cols[iDate]?.trim();
-      const rawSec  = cols[iSec]?.trim().toLowerCase();
-      const rawM3   = parseFloat(cols[iM3]?.trim().replace(",","."));
+      const rawSec  = cols[iSec]?.trim();
+      const rawM3   = parseFloat((cols[iM3]?.trim()||"").replace(",","."));
       if(!rawDate||isNaN(rawM3)) continue;
-
-      // Normalize date dd/mm/yyyy → yyyy-mm-dd
       let fecha = rawDate;
       const dm = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
       if(dm) fecha = `${dm[3].length===2?"20"+dm[3]:dm[3]}-${dm[2].padStart(2,"0")}-${dm[1].padStart(2,"0")}`;
 
-      // Match sector to CULTIVOS turnos
-      let matchedCult = null, matchedTurno = null;
+      // Try OlivePlus map first, then direct turno match
+      const rule = OLIVE_MAP.find(r=>r.match.test(rawSec));
+      if(rule&&rule.ids.length>0){
+        const dist = distribuirM3(rule.ids, rawM3, fecha, "OlivePlus CSV");
+        if(!newReg[fecha]) newReg[fecha]={};
+        Object.assign(newReg[fecha], dist);
+        imported += Object.keys(dist).length;
+        continue;
+      }
       for(const c of CULTIVOS){
         for(const t of c.turnos){
-          const tl = t.label.toLowerCase().replace(/\s+/g,"");
-          const rl = rawSec.replace(/\s+/g,"");
-          if(tl===rl||tl.includes(rl)||rl.includes(tl)||t.id.toLowerCase()===rl){
-            matchedCult=c; matchedTurno=t; break;
+          if(t.label.toLowerCase().includes(rawSec.toLowerCase())||rawSec.toLowerCase().includes(t.id.toLowerCase())){
+            const key=`${c.id}__${t.id}`;
+            if(!newReg[fecha]) newReg[fecha]={};
+            newReg[fecha][key]={ m3Real:rawM3, ec:iEC>=0?cols[iEC]?.trim():"", ph:iPH>=0?cols[iPH]?.trim():"", notas:iNotas>=0?cols[iNotas]?.trim():"CSV" };
+            imported++; break;
           }
         }
-        if(matchedTurno) break;
       }
-      if(!matchedCult) continue;
-
-      const key = `${matchedCult.id}__${matchedTurno.id}`;
-      if(!newReg[fecha]) newReg[fecha]={};
-      newReg[fecha][key] = {
-        m3Real: rawM3,
-        ec: iEC>=0 ? cols[iEC]?.trim() : "",
-        ph: iPH>=0 ? cols[iPH]?.trim() : "",
-        notas: iNotas>=0 ? cols[iNotas]?.trim() : "Importado OlivePlus",
-      };
-      imported++;
     }
-    if(imported===0)
-      return { ok:false, msg:"No se pudo importar ninguna fila. Verifica que los nombres de sectores coincidan con los del predio." };
-
-    setRegistro(p=>{ const merged={...p}; for(const [d,v] of Object.entries(newReg)) merged[d]={...merged[d],...v}; return merged; });
-    return { ok:true, msg:`✅ ${imported} registros importados correctamente desde OlivePlus.` };
+    if(imported===0) return { ok:false, msg:"No se pudo importar ninguna fila. Verifica el formato del archivo." };
+    setRegistro(p=>{ const m={...p}; for(const[d,v] of Object.entries(newReg)) m[d]={...m[d],...v}; return m; });
+    return { ok:true, msg:`✅ ${imported} registros importados.` };
   };
 
-  const handleCSVFile = (file) => {
+  const handleCSVFile = async (file) => {
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = e => { const res=parseCSV(e.target.result); setCsvMsg(res.msg); };
-    reader.readAsText(file, "utf-8");
+    setCsvMsg("Leyendo archivo...");
+    try{
+      // Load SheetJS if needed
+      if(!window.XLSX){
+        await new Promise((res,rej)=>{
+          const s=document.createElement("script");
+          s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+          s.onload=res; s.onerror=rej; document.head.appendChild(s);
+        });
+      }
+      const buf = await file.arrayBuffer();
+      const wb  = window.XLSX.read(buf, {type:"array"});
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      // Convert sheet to tab-separated text preserving structure
+      const tsv = window.XLSX.utils.sheet_to_csv(ws, {FS:"\t", RS:"\n"});
+      const res = parseCSV(tsv);
+      setCsvMsg(res.msg);
+    } catch(e){
+      // Fallback: try reading as text (CSV)
+      const reader = new FileReader();
+      reader.onload = e => { const res=parseCSV(e.target.result); setCsvMsg(res.msg); };
+      reader.onerror = () => setCsvMsg("❌ Error al leer el archivo.");
+      reader.readAsText(file, "utf-8");
+    }
   };
 
   const fetchWeather = useCallback(async()=>{
@@ -801,8 +902,8 @@ export default function App() {
                         style={{border:`2px dashed ${csvDrag?"#4A7FA5":"rgba(92,61,40,0.25)"}`,borderRadius:4,padding:"20px 16px",textAlign:"center",background:csvDrag?"rgba(74,127,165,0.06)":"rgba(232,220,191,0.2)",transition:"all 0.15s",cursor:"pointer"}}
                         onClick={()=>document.getElementById("csv-input").click()}>
                         <div style={{fontSize:28,marginBottom:8}}>📂</div>
-                        <div className="serif" style={{fontSize:15,color:"#5C3D28",marginBottom:4}}>Arrastra el archivo CSV / Excel aquí</div>
-                        <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>o haz clic para seleccionar · Soporta CSV y TSV exportados desde OlivePlus</div>
+                        <div className="serif" style={{fontSize:15,color:"#5C3D28",marginBottom:4}}>Arrastra el archivo Excel de OlivePlus aquí</div>
+                        <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>o haz clic para seleccionar · Acepta .xlsx exportado desde OlivePlus · "Riego acumulado por equipo"</div>
                         <input id="csv-input" type="file" accept=".csv,.tsv,.txt,.xlsx" style={{display:"none"}}
                           onChange={e=>handleCSVFile(e.target.files[0])}/>
                       </div>
@@ -815,11 +916,13 @@ export default function App() {
                           {csvMsg}
                         </div>
                       )}
-                      <div className="mono" style={{marginTop:10,fontSize:8,color:"#9C7A5A",lineHeight:1.8}}>
-                        Columnas que debe tener el CSV de OlivePlus:<br/>
-                        <span style={{color:"#5C3D28"}}>fecha</span> · <span style={{color:"#5C3D28"}}>sector</span> (o turno) · <span style={{color:"#5C3D28"}}>m3</span> (o volumen)<br/>
-                        Opcionales: ec · ph · notas<br/>
-                        Formatos fecha: DD/MM/YYYY o YYYY-MM-DD
+                      <div className="mono" style={{marginTop:10,fontSize:8,color:"#9C7A5A",lineHeight:1.9}}>
+                        <span style={{color:"#3D6B35",fontWeight:500}}>✓ Equipos reconocidos automáticamente:</span><br/>
+                        <span style={{color:"#5C3D28"}}>Citricos (MELBACE2V4)</span> → Naranjos Lanelate<br/>
+                        <span style={{color:"#5C3D28"}}>Naranjos Valencia (MELBACE4V4)</span> → Valencia/Midnight<br/>
+                        <span style={{color:"#5C3D28"}}>Paltos (MELBACE1)</span> → Paltos Viejos + Nuevos 1+2 + Nuevos 3<br/>
+                        <span style={{color:"#9C7A5A"}}>Control Heladas paltos viejos</span> → ignorado (solo monitoreo)<br/><br/>
+                        El volumen se distribuye proporcionalmente entre sectores según hectáreas.
                       </div>
                     </div>
 
