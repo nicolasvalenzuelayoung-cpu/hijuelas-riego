@@ -115,7 +115,76 @@ export default function App() {
   const [cultSel, setCultSel] = useState("todos");
   const [tab,     setTab]     = useState("tabla");
   const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,kcDeFecha(c.id)])));
-  const [kcAuto,  setKcAuto]  = useState(true); // true = sigue fenología mensual
+  const [kcAuto,  setKcAuto]  = useState(true);
+
+  // ── Datos manuales estación FieldClimate ───────────────────
+  // Permite ingresar datos reales de "Nueva Purehue" [0020F829]
+  // y recalcular ETo FAO-PM con valores medidos en vez de ERA5
+  const [stData, setStData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hijuelas_stdata") || "{}"); }
+    catch { return {}; }
+  });
+  const [stEdit, setStEdit] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem("hijuelas_stdata", JSON.stringify(stData)); }
+    catch(e) {}
+  }, [stData]);
+
+  // Calcula ETo FAO-PM simplificado con datos de estación
+  // Referencia: FAO-56 Eq. 6 (Hargreaves como fallback si faltan datos)
+  const etoFromStation = (fecha) => {
+    const d = stData[fecha];
+    if (!d || !d.tmax || !d.tmin) return null;
+    const tmax = parseFloat(d.tmax), tmin = parseFloat(d.tmin);
+    const tmean = (tmax + tmin) / 2;
+    // Si tenemos HR y viento usamos Penman-Monteith simplificado
+    // Si no, Hargreaves (solo T°)
+    if (d.rs || d.viento) {
+      const hr   = parseFloat(d.hr || 70);
+      const u2   = parseFloat(d.viento || 2) * 0.748; // km/h → m/s aprox
+      const ra   = parseFloat(d.ra || 25); // MJ/m²/día estimado según mes/latitud
+      // Presión de saturación
+      const es_max = 0.6108 * Math.exp(17.27 * tmax / (tmax + 237.3));
+      const es_min = 0.6108 * Math.exp(17.27 * tmin / (tmin + 237.3));
+      const es = (es_max + es_min) / 2;
+      const ea = (hr / 100) * es;
+      const vpd = es - ea;
+      // Delta (pendiente curva presión de vapor)
+      const delta = 4098 * (0.6108 * Math.exp(17.27 * tmean / (tmean + 237.3))) / Math.pow(tmean + 237.3, 2);
+      // Gamma (constante psicrométrica, P=88 kPa a 312m s.n.m.)
+      const gamma = 0.0655;
+      // Rn estimada desde Ra (si no tienen piranómetro)
+      const rs = parseFloat(d.rs || ra * 0.5);
+      const rns = (1 - 0.23) * rs;
+      const rso = (0.75 + 2e-5 * 312) * ra;
+      const rnl = 4.903e-9 * ((Math.pow(tmax+273.16,4)+Math.pow(tmin+273.16,4))/2) * (0.34-0.14*Math.sqrt(ea)) * (1.35*(rs/rso)-0.35);
+      const rn = Math.max(0, rns - rnl);
+      const G = 0;
+      const eto = (0.408*delta*(rn-G) + gamma*(900/(tmean+273))*u2*vpd) / (delta + gamma*(1+0.34*u2));
+      return Math.max(0, eto).toFixed(2);
+    } else {
+      // Hargreaves: ETo = 0.0023 × Ra × (T+17.8) × (Tmax-Tmin)^0.5
+      const mes = new Date(fecha+"T12:00:00").getMonth();
+      // Ra mensual estimada para latitud -32.8° (MJ/m²/día)
+      const RA = [36,33,28,22,17,14,15,19,25,30,34,37];
+      const ra = RA[mes];
+      const eto = 0.0023 * ra * (tmean + 17.8) * Math.pow(Math.max(0,tmax-tmin), 0.5);
+      return Math.max(0, eto).toFixed(2);
+    }
+  };
+
+  // Merge: usa datos de estación si existen, si no usa Open-Meteo
+  const getEto = (row) => {
+    const st = etoFromStation(row.date);
+    return st ? parseFloat(st) : row.eto;
+  };
+  const getTmax = (row) => stData[row.date]?.tmax ? parseFloat(stData[row.date].tmax) : row.tmax;
+  const getTmin = (row) => stData[row.date]?.tmin ? parseFloat(stData[row.date].tmin) : row.tmin;
+  const getHR   = (row) => stData[row.date]?.hr   ? parseFloat(stData[row.date].hr)   : row.hum;
+  const getWind = (row) => stData[row.date]?.viento? parseFloat(stData[row.date].viento): row.wind;
+  const getPrecip=(row) => stData[row.date]?.lluvia? parseFloat(stData[row.date].lluvia): row.precip;
+  const hasStation=(fecha)=> !!(stData[fecha]?.tmax && stData[fecha]?.tmin); // true = sigue fenología mensual
   const [selDate, setSelDate] = useState(null);
   // ── Gráficos ──────────────────────────────────────────────
   const [chartCult, setChartCult] = useState("todos");
@@ -402,10 +471,10 @@ export default function App() {
         {todayRow&&(
           <div style={{padding:"10px 32px 14px",borderTop:"1px solid rgba(242,235,217,0.08)",display:"flex",gap:0,flexWrap:"wrap"}}>
             {[
-              {l:"ETo hoy",  v:todayRow.eto.toFixed(2), u:"mm/día", c:"#F2EBD9"},
-              {l:"Temp.",    v:`${todayRow.tmax?.toFixed(0)}° / ${todayRow.tmin?.toFixed(0)}°`, u:"máx/mín",c:"rgba(242,235,217,0.75)"},
+              {l:"ETo hoy",  v:getEto(todayRow).toFixed(2), u:"mm/día", c:"#F2EBD9"},
+              {l:"Temp.",    v:`${getTmax(todayRow)?.toFixed(0)}° / ${getTmin(todayRow)?.toFixed(0)}°`, u:"máx/mín",c:"rgba(242,235,217,0.75)"},
               {l:"Viento",   v:todayRow.wind?.toFixed(0), u:"km/h",c:"rgba(242,235,217,0.65)"},
-              {l:"Lluvia",   v:todayRow.precip.toFixed(1), u:"mm",c:"#7EB3D3"},
+              {l:"Lluvia",   v:getPrecip(todayRow).toFixed(1), u:"mm",c:"#7EB3D3"},
               {l:"Cítricos", v:volGrp(todayRow,citIds).toFixed(0), u:"m³",c:"#E8A882"},
               {l:"Paltos",   v:volGrp(todayRow,pltIds).toFixed(0), u:"m³",c:"#8FA370"},
               {l:"TOTAL PREDIO",v:volGrp(todayRow,allIds).toFixed(0), u:"m³",c:"#F2EBD9"},
@@ -472,8 +541,79 @@ export default function App() {
             ))}
 
             {/* Kc */}
+            {/* Estación FieldClimate */}
             <div style={{margin:"16px 16px 0",borderTop:"1px solid rgba(92,61,40,0.15)"}}/>
-            <div className="mono" style={{fontSize:9,color:"#9C7A5A",padding:"10px 16px 6px",letterSpacing:2.5}}>Kc CULTIVO</div>
+            <div style={{padding:"10px 16px 6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2.5}}>ESTACIÓN REAL</div>
+              <button onClick={()=>setStEdit(p=>!p)}
+                style={{fontFamily:"'DM Mono',monospace",fontSize:8,padding:"2px 7px",borderRadius:10,cursor:"pointer",
+                  background:stEdit?"#2C1810":"transparent",color:stEdit?"#F2EBD9":"#5C3D28",
+                  border:"1px solid rgba(92,61,40,0.3)"}}>
+                {stEdit?"✓ cerrar":"✎ ingresar"}
+              </button>
+            </div>
+            <div style={{padding:"0 16px"}}>
+              <div className="mono" style={{fontSize:8,color:"#3D6B35",marginBottom:4}}>
+                Nueva Purehue [0020F829]
+              </div>
+              {stEdit && (()=>{
+                const hoy=todayStr();
+                const fields=[
+                  {k:"tmax",  l:"T° Máx", u:"°C",   step:"0.1"},
+                  {k:"tmin",  l:"T° Mín", u:"°C",   step:"0.1"},
+                  {k:"hr",    l:"HR",     u:"%",    step:"1"},
+                  {k:"viento",l:"Viento", u:"km/h", step:"0.1"},
+                  {k:"lluvia",l:"Lluvia", u:"mm",   step:"0.1"},
+                ];
+                return(
+                  <div>
+                    <div style={{marginBottom:8}}>
+                      <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>FECHA</div>
+                      <input type="date" defaultValue={hoy}
+                        id="st-fecha"
+                        style={{fontFamily:"'DM Mono',monospace",fontSize:11,background:"rgba(44,24,16,0.04)",
+                          border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"4px 6px",borderRadius:2,width:"100%"}}/>
+                    </div>
+                    {fields.map(f=>(
+                      <div key={f.k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <span className="mono" style={{fontSize:9,color:"#5C3D28"}}>{f.l} <span style={{opacity:0.5}}>{f.u}</span></span>
+                        <input type="number" step={f.step} placeholder="—"
+                          value={stData[document.getElementById("st-fecha")?.value||hoy]?.[f.k]||""}
+                          onChange={e=>{
+                            const fecha=document.getElementById("st-fecha")?.value||hoy;
+                            setStData(p=>({...p,[fecha]:{...(p[fecha]||{}),[f.k]:e.target.value}}));
+                          }}
+                          style={{fontFamily:"'DM Mono',monospace",fontSize:11,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"4px 5px",borderRadius:2,width:60,textAlign:"right"}}/>
+                      </div>
+                    ))}
+                    <div className="mono" style={{fontSize:8,color:"#3D6B35",lineHeight:1.6,marginTop:4}}>
+                      Con T°máx+mín calcula ETo<br/>Hargreaves desde tu estación.<br/>Con HR+Viento usa FAO PM.
+                    </div>
+                  </div>
+                );
+              })()}
+              {!stEdit&&(()=>{
+                const hoy=todayStr();
+                const d=stData[hoy];
+                const eto=etoFromStation(hoy);
+                if(!d?.tmax) return <div className="mono" style={{fontSize:8,color:"rgba(92,61,40,0.35)",lineHeight:1.6}}>Sin datos hoy.<br/>Haz clic en "ingresar".</div>;
+                return(
+                  <div>
+                    {eto&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                      <span className="mono" style={{fontSize:9,color:"#9C7A5A"}}>ETo estación</span>
+                      <span className="mono" style={{fontSize:11,fontWeight:600,color:"#C2622D"}}>{eto} mm</span>
+                    </div>}
+                    {[["T°",`${d.tmax}°/${d.tmin}°`],["HR",d.hr?d.hr+"%":"—"],["Viento",d.viento?d.viento+" km/h":"—"],["Lluvia",d.lluvia?d.lluvia+" mm":"—"]].map(([l,v])=>(
+                      <div key={l} style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                        <span className="mono" style={{fontSize:8,color:"#9C7A5A"}}>{l}</span>
+                        <span className="mono" style={{fontSize:9,color:"#5C3D28"}}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
             {/* Auto/Manual toggle */}
             <div style={{padding:"0 16px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span className="mono" style={{fontSize:8,color:kcAuto?"#3D6B35":"#9C7A5A"}}>
@@ -561,11 +701,14 @@ export default function App() {
                                       {sel&&<span style={{marginLeft:"auto",fontSize:12,color:"#C2622D"}}>→</span>}
                                     </div>
                                   </td>
-                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:row.eto>5?"#C2622D":row.eto>3?"#B8860B":"#5C3D28",fontWeight:hoy?700:400}}>{n(row.eto)}</td>
-                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:row.precip>0?"#4A7FA5":"#B8B0A0"}}>{n(row.precip,1)}</td>
-                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:"#5C3D28"}}>{n(row.tmax,1)}°</td>
-                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:"#9C7A5A"}}>{n(row.tmin,1)}°</td>
-                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:"#9C7A5A"}}>{n(row.wind,0)}</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:getEto(row)>5?"#C2622D":getEto(row)>3?"#B8860B":"#5C3D28",fontWeight:hoy?700:400}}>
+                                    {n(getEto(row))}
+                                    {hasStation(row.date)&&<span style={{fontSize:7,color:"#3D6B35",marginLeft:3}}>●</span>}
+                                  </td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:getPrecip(row)>0?"#4A7FA5":"#B8B0A0"}}>{n(getPrecip(row),1)}</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:hasStation(row.date)?"#2C1810":"#5C3D28",fontWeight:hasStation(row.date)?600:400}}>{n(getTmax(row),1)}°</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:hasStation(row.date)?"#4A7FA5":"#9C7A5A",fontWeight:hasStation(row.date)?600:400}}>{n(getTmin(row),1)}°</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:"#9C7A5A"}}>{n(getWind(row),0)}</td>
                                   <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:"#B8860B",fontWeight:500}}>{fut?"—":acum.toFixed(1)}</td>
                                 </tr>
                               );
@@ -596,7 +739,7 @@ export default function App() {
                   {/* RIGHT: Detail panel for selected date */}
                   <div>
                     {selectedRow&&(()=>{
-                      const ep=Math.min(selectedRow.precip*0.8,selectedRow.eto);
+                      const ep=Math.min(getPrecip(selectedRow)*0.8,getEto(selectedRow));
                       const hoy=isToday(selectedRow.date),fut=isFuture(selectedRow.date);
                       return(
                         <>
@@ -614,13 +757,13 @@ export default function App() {
                             </div>
                             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
                               {[
-                                {ico:"☀",l:"ETo FAO-PM",v:n(selectedRow.eto)+" mm",c:"#C2622D",big:true},
-                                {ico:"🌡",l:"T° Máx / Mín",v:`${n(selectedRow.tmax,1)}° / ${n(selectedRow.tmin,1)}°`,c:"#5C3D28"},
-                                {ico:"💧",l:"Precipitación",v:n(selectedRow.precip,1)+" mm",c:selectedRow.precip>0?"#4A7FA5":"#B8B0A0"},
-                                {ico:"🌬",l:"Viento máx.",v:n(selectedRow.wind,0)+" km/h",c:"#5C3D28"},
-                                {ico:"🌫",l:"Humedad máx.",v:n(selectedRow.hum,0)+"%",c:"#5C3D28"},
+                                {ico:"☀",l:"ETo FAO-PM",v:n(getEto(selectedRow))+" mm",c:"#C2622D",big:true},
+                                {ico:"🌡",l:"T° Máx / Mín",v:`${n(getTmax(selectedRow),1)}° / ${n(getTmin(selectedRow),1)}°`,c:"#5C3D28"},
+                                {ico:"💧",l:"Precipitación",v:n(getPrecip(selectedRow),1)+" mm",c:getPrecip(selectedRow)>0?"#4A7FA5":"#B8B0A0"},
+                                {ico:"🌬",l:"Viento máx.",v:n(getWind(selectedRow),0)+" km/h",c:"#5C3D28"},
+                                {ico:"🌫",l:"Humedad máx.",v:n(getHR(selectedRow),0)+"%",c:"#5C3D28"},
                                 {ico:"💦",l:"Prec. efectiva",v:ep.toFixed(2)+" mm",c:"#4A7FA5"},
-                                {ico:"📉",l:"Déficit hídrico",v:(selectedRow.eto-ep).toFixed(2)+" mm",c:"#B8860B"},
+                                {ico:"📉",l:"Déficit hídrico",v:(getEto(selectedRow)-ep).toFixed(2)+" mm",c:"#B8860B"},
                                 {ico:"📆",l:"Día del año",v:Math.floor((new Date(selectedRow.date)-new Date(new Date(selectedRow.date).getFullYear()+"-01-01"))/864e5)+1,c:"#9C7A5A"},
                               ].map(s=>(
                                 <div key={s.l} style={{padding:"10px 12px",background:"rgba(255,252,244,0.7)",borderRadius:3,border:"1px solid rgba(92,61,40,0.1)"}}>
@@ -635,7 +778,7 @@ export default function App() {
                           <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>PROGRAMA DE RIEGO POR CULTIVO</div>
                           <div style={{display:"flex",flexDirection:"column",gap:10}}>
                             {visibles.map(c=>{
-                              const tR=calcAuto(c,kcs,kcAuto,selectedRow.eto,selectedRow.precip,selectedRow.date);
+                              const tR=calcAuto(c,kcs,kcAuto,getEto(selectedRow),getPrecip(selectedRow),selectedRow.date);
                               const volTot=tR.reduce((a,t)=>a+t.volTotal,0);
                               const horTot=tR.reduce((a,t)=>a+t.horas,0);
                               return(
@@ -646,7 +789,7 @@ export default function App() {
                                       <div style={{width:4,height:38,background:c.color,borderRadius:2}}/>
                                       <div>
                                         <div className="fell" style={{fontSize:17,fontWeight:400,color:"#2C1810"}}>{c.emoji} {c.label}</div>
-                                        <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>{c.cultivo} · {c.area} ha · Kc {kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id]} · ETc {(selectedRow.eto*(kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id])).toFixed(2)} mm</div>
+                                        <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>{c.cultivo} · {c.area} ha · Kc {kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id]} · ETc {(getEto(selectedRow)*(kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id])).toFixed(2)} mm</div>
                                       </div>
                                     </div>
                                     <div style={{display:"flex",gap:24,alignItems:"center"}}>
@@ -722,12 +865,12 @@ export default function App() {
             {tab==="hoy"&&todayRow&&(
               <div className="fade">
                 <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Programa de Riego</h2>
-                <div className="serif" style={{fontSize:16,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{fmtFull(todayStr())} · ETo {todayRow.eto.toFixed(2)} mm/día</div>
+                <div className="serif" style={{fontSize:16,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{fmtFull(todayStr())} · ETo {getEto(todayRow).toFixed(2)} mm/día</div>
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {visibles.map(c=>{
-                    const tR=calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date);
+                    const tR=calcAuto(c,kcs,kcAuto,getEto(todayRow),getPrecip(todayRow),todayRow.date);
                     const volTot=tR.reduce((a,t)=>a+t.volTotal,0),horTot=tR.reduce((a,t)=>a+t.horas,0);
-                    const ep=Math.min(todayRow.precip*0.8,todayRow.eto*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id]));
+                    const ep=Math.min(getPrecip(todayRow)*0.8,getEto(todayRow)*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id]));
                     return(
                       <div key={c.id} className="card" style={{overflow:"hidden",border:`1px solid ${c.color}33`}}>
                         <div style={{padding:"14px 20px",background:`linear-gradient(135deg,${c.light}66,rgba(255,252,244,0))`,borderBottom:"1px solid rgba(92,61,40,0.1)",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
@@ -735,7 +878,7 @@ export default function App() {
                             <div style={{width:4,height:42,background:c.color,borderRadius:2}}/>
                             <div>
                               <div className="fell" style={{fontSize:19,fontWeight:400,color:"#2C1810"}}>{c.emoji} {c.label}</div>
-                              <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:3}}>{c.cultivo} · {c.area} ha · Kc {kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id]} · ETc {(todayRow.eto*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id])).toFixed(2)} mm · Prec.Ef. {ep.toFixed(2)} mm</div>
+                              <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:3}}>{c.cultivo} · {c.area} ha · Kc {kcAuto?kcDeFecha(c.id,selectedRow?.date):kcs[c.id]} · ETc {(getEto(todayRow)*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id])).toFixed(2)} mm · Prec.Ef. {ep.toFixed(2)} mm</div>
                             </div>
                           </div>
                           <div style={{display:"flex",gap:28}}>
@@ -833,7 +976,7 @@ export default function App() {
                 <div className="serif" style={{fontSize:15,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{TOTAL_HA.toFixed(2)} ha totales · {new Date().toLocaleDateString("es-CL",{day:"numeric",month:"long",year:"numeric"})}</div>
                 {["citricos","paltos"].map(grp=>{
                   const cult=CULTIVOS.filter(c=>c.grupo===grp);
-                  const grpVol=cult.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
+                  const grpVol=cult.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,getEto(todayRow),getPrecip(todayRow),todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
                   const grpHa=cult.reduce((a,c)=>a+c.area,0);
                   const gc=grp==="citricos"?"#C2622D":"#3D6B35";
                   return(
@@ -844,14 +987,14 @@ export default function App() {
                       </div>
                       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
                         {cult.map(c=>{
-                          const tR=calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date);
+                          const tR=calcAuto(c,kcs,kcAuto,getEto(todayRow),getPrecip(todayRow),todayRow.date);
                           const vol=tR.reduce((a,t)=>a+t.volTotal,0),hrs=tR.reduce((a,t)=>a+t.horas,0);
                           return(
                             <div key={c.id} className="card" style={{padding:"14px 18px",background:`linear-gradient(135deg,${c.light}55,rgba(255,252,244,0.9))`}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                                 <div style={{width:3,height:32,background:c.color,borderRadius:1}}/>
                                 <div><div className="fell" style={{fontSize:15,color:"#2C1810"}}>{c.emoji} {c.label}</div>
-                                <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>{c.area} ha · ETc {(todayRow.eto*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id])).toFixed(2)} mm</div></div>
+                                <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>{c.area} ha · ETc {(getEto(todayRow)*(kcAuto?kcDeFecha(c.id,todayRow.date):kcs[c.id])).toFixed(2)} mm</div></div>
                               </div>
                               <div style={{display:"flex",justifyContent:"space-between"}}>
                                 <div><div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>VOLUMEN</div><span className="serif" style={{fontWeight:700,fontSize:22,color:c.color}}>{vol.toFixed(0)} m³</span></div>
@@ -871,14 +1014,14 @@ export default function App() {
                   );
                 })}
                 {(()=>{
-                  const allVol=CULTIVOS.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
-                  const cVol=CULTIVOS.filter(c=>c.grupo==="citricos").reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
-                  const pVol=CULTIVOS.filter(c=>c.grupo==="paltos").reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,todayRow.eto,todayRow.precip,todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
+                  const allVol=CULTIVOS.reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,getEto(todayRow),getPrecip(todayRow),todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
+                  const cVol=CULTIVOS.filter(c=>c.grupo==="citricos").reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,getEto(todayRow),getPrecip(todayRow),todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
+                  const pVol=CULTIVOS.filter(c=>c.grupo==="paltos").reduce((a,c)=>a+calcAuto(c,kcs,kcAuto,getEto(todayRow),getPrecip(todayRow),todayRow.date).reduce((b,t)=>b+t.volTotal,0),0);
                   return(
                     <div style={{padding:"20px 26px",background:"#2C1810",borderRadius:4,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
                       <div><div className="mono" style={{fontSize:10,letterSpacing:3,color:"rgba(242,235,217,0.38)",marginBottom:4}}>TOTAL PREDIO HOY</div>
                         <div style={{display:"flex",alignItems:"baseline",gap:6}}><span className="serif" style={{fontWeight:700,fontSize:44,color:"#F2EBD9",lineHeight:1}}>{allVol.toFixed(0)}</span><span className="fell" style={{fontSize:18,color:"rgba(242,235,217,0.5)"}}>m³</span></div>
-                        <div className="mono" style={{fontSize:9,color:"rgba(242,235,217,0.24)",marginTop:3}}>{TOTAL_HA.toFixed(2)} ha · ETo {todayRow.eto.toFixed(2)} mm</div></div>
+                        <div className="mono" style={{fontSize:9,color:"rgba(242,235,217,0.24)",marginTop:3}}>{TOTAL_HA.toFixed(2)} ha · ETo {getEto(todayRow).toFixed(2)} mm</div></div>
                       <div style={{display:"flex",gap:32}}>
                         {[["🍊 Cítricos",cVol,"#C2622D"],["🥑 Paltos",pVol,"#5A6E3A"]].map(([l,v,col])=>(
                           <div key={l} style={{textAlign:"right"}}><div className="mono" style={{fontSize:9,color:"rgba(242,235,217,0.3)",letterSpacing:1}}>{l}</div>
