@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const LAT = -32.785, LON = -71.143;
+const LAT = -32.827378, LON = -71.090495; // Estación "Nueva Purehue" ID:0020F829 · FieldClimate · 312m s.n.m.
 
 // ─── Kc mensual por cultivo (hemisferio sur, 32°S, Hijuelas)
 // Índice 0=Enero … 11=Diciembre
@@ -339,7 +339,7 @@ export default function App() {
   const fetchWeather = useCallback(async()=>{
     setLoading(true); setError(null);
     try{
-      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max&timezone=America%2FSantiago&past_days=7&forecast_days=3`);
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max&timezone=America%2FSantiago&past_days=7&forecast_days=3`);
       if(!r.ok) throw new Error("HTTP "+r.status);
       setWeather((await r.json()).daily);
       setLastUpd(new Date().toLocaleTimeString("es-CL"));
@@ -1619,7 +1619,7 @@ export default function App() {
                 </div>
                 <div className="card" style={{marginTop:14,padding:"12px 18px"}}>
                   <div className="serif" style={{fontSize:12,color:"#9C7A5A",fontStyle:"italic",lineHeight:2}}>
-                    Metodología: ETo por FAO Penman-Monteith (Open-Meteo) · ETc = ETo × Kc (FAO-56) · Precipitación efectiva = 80% lluvia · Riego bruto = Neto ÷ Eficiencia del sistema · Vol. m³/ha = Riego bruto (mm) × 10 · Horas = Vol. total ÷ Caudal sector · Coordenadas: Hijuelas, V Región, Chile (-32.785°S / -71.143°O)
+                    Metodología: ETo por FAO Penman-Monteith (Open-Meteo) · ETc = ETo × Kc (FAO-56) · Precipitación efectiva = 80% lluvia · Riego bruto = Neto ÷ Eficiencia del sistema · Vol. m³/ha = Riego bruto (mm) × 10 · Horas = Vol. total ÷ Caudal sector · Estación meteorológica: Nueva Purehue [0020F829] · Hijuelas, V Región, Chile (-32.827°S / -71.090°O · 312 m s.n.m.)
                   </div>
                 </div>
               </div>
