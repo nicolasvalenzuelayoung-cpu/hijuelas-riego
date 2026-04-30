@@ -147,149 +147,165 @@ export default function App() {
   const getReg = (fecha, cultId, sectorId, campo) =>
     registro?.[fecha]?.[`${cultId}__${sectorId}`]?.[campo] ?? "";
 
-  // ── OlivePlus equipment → cultivo IDs mapping ─────────────
-  // Clave: fragmento del nombre en OlivePlus (minúsculas, sin acento)
-  // Valor: array de IDs de CULTIVOS que cubre ese equipo
-  const OLIVE_MAP = [
-    { match: /melbace2v4|citrico.*melbace2|lanelate/i,   ids: ["lanelate"] },
-    { match: /melbace4v4|valencia/i,                      ids: ["valencia"] },
-    { match: /melbace1|paltos.*melbace1/i,                ids: ["paltos_v","paltos_n12","paltos_n3"] },
-    { match: /paltos.*viej|viej.*palto/i,                 ids: ["paltos_v"] },
-    { match: /paltos.*nuev.*1.*2|paltos.*n1|melbace3/i,   ids: ["paltos_n12"] },
-    { match: /paltos.*nuev.*3|paltos.*n3/i,               ids: ["paltos_n3"] },
-    { match: /control.*helada/i,                          ids: [] }, // solo monitoreo, ignorar
+  // ── OlivePlus: mapeo EXACTO sector → cultivo/turno ─────────
+  // Fuente: confirmación Nico Valenzuela, abril 2026
+  //
+  // Reporte por sectores (granular):
+  //   Linea 2 V1+V2  → Paltos Nuevos 1+2 (T1+T2, distribuir por ha)
+  //   Linea 2 V3     → Paltos Viejos T1
+  //   Linea 2 V4     → Paltos Viejos T2
+  //   Linea 2 V5     → Paltos Viejos T3
+  //   Linea 2 V6     → Paltos Viejos T4
+  //   Linea 1 V1     → Naranjos Lanelate S1
+  //   Linea 1 V2     → Naranjos Lanelate S2
+  //   Linea 1 V3     → Paltos Nuevos 3 (sector único)
+  //   Linea 3 V1     → Valencia/Midnight OP1
+  //   Linea 3 V2     → Valencia/Midnight OP2
+  //
+  // Reporte acumulado por equipo (agrupado):
+  //   Citricos (MELBACE2V4)       → Lanelate S1+S2 + Paltos Nuevos 3
+  //   Naranjos Valencia (MELBACE4V4) → Valencia OP1+OP2
+  //   Paltos (MELBACE1)           → Paltos Viejos T1-T4 + Paltos N1+2 T1+T2
+
+  const OLIVE_SECTOR_MAP = [
+    // ── Paltos MELBACE1 (Linea 2) ─────────────────────────────
+    // V1+V2 combinadas = Paltos Nuevos 1+2 completo (T1+T2, distribuir por ha)
+    { match:/linea\s*2\s*v1\s*\+\s*v2|linea\s*2\s*v1.*\+.*v2/i, cultId:"paltos_n12", sectorId:null },
+    // V1 individual (puede aparecer solo con 0 m³ → ignorar si es 0, o T1 si tiene valor)
+    { match:/linea\s*2\s*v1\s*\(/i,                               cultId:"paltos_n12", sectorId:"T1" },
+    // V2 individual
+    { match:/linea\s*2\s*v2\s*\(/i,                               cultId:"paltos_n12", sectorId:"T2" },
+    // V3 → Paltos Viejos T1
+    { match:/linea\s*2\s*v3/i,                                    cultId:"paltos_v",   sectorId:"T1" },
+    // V4 → Paltos Viejos T2
+    { match:/linea\s*2\s*v4/i,                                    cultId:"paltos_v",   sectorId:"T2" },
+    // V5 → Paltos Viejos T3
+    { match:/linea\s*2\s*v5/i,                                    cultId:"paltos_v",   sectorId:"T3" },
+    // V6 → Paltos Viejos T4
+    { match:/linea\s*2\s*v6/i,                                    cultId:"paltos_v",   sectorId:"T4" },
+    // ── Cítricos MELBACE2V4 (Linea 1) ─────────────────────────
+    // 1v1 / Linea 1 V1 → Naranjos Lanelate S1
+    { match:/linea\s*1\s*v1/i,                                    cultId:"lanelate",   sectorId:"S1" },
+    // 1v2 / Linea 1 V2 → Naranjos Lanelate S2
+    { match:/linea\s*1\s*v2/i,                                    cultId:"lanelate",   sectorId:"S2" },
+    // 1v3 / Linea 1 V3 → Paltos Nuevos 3 (sector único, 3 válvulas en paralelo)
+    { match:/linea\s*1\s*v3/i,                                    cultId:"paltos_n3",  sectorId:"S1" },
+    // ── Valencia MELBACE4V4 (Linea 3) ─────────────────────────
+    // 3v1 / Linea 3 V1 → Valencia Operación 1
+    { match:/linea\s*3\s*v1/i,                                    cultId:"valencia",   sectorId:"OP1" },
+    // 3v2 / Linea 3 V2 → Valencia Operación 2
+    { match:/linea\s*3\s*v2/i,                                    cultId:"valencia",   sectorId:"OP2" },
+    // ── Ignorar siempre ────────────────────────────────────────
+    { match:/control.*helada|v7|v8/i,                             cultId:null,         sectorId:null  },
   ];
 
-  // Distribuye m³ totales de un equipo entre sus cultivos y sectores
-  // proporcionalmente por hectárea
-  const distribuirM3 = (ids, m3Total, fecha, notas) => {
-    const cultivos = ids.map(id=>CULTIVOS.find(c=>c.id===id)).filter(Boolean);
-    const haTotal = cultivos.reduce((a,c)=>a+c.area,0);
-    if(haTotal===0) return {};
-    const result = {};
-    for(const c of cultivos){
-      const m3Cultivo = m3Total * (c.area/haTotal);
-      const haTurnos = c.turnos.reduce((a,t)=>a+t.ha,0);
-      for(const t of c.turnos){
-        const key = `${c.id}__${t.id}`;
-        result[key] = {
-          m3Real: (m3Cultivo * (t.ha/haTurnos)).toFixed(1),
-          ec: "", ph: "",
-          notas: notas||"OlivePlus",
-        };
-      }
+  // Mapeo equipo completo (reporte acumulado) → IDs para distribución por ha
+  const OLIVE_EQUIPO_MAP = [
+    { match:/melbace2v4|citrico.*melbace2/i,   ids:[{cid:"lanelate",tids:["S1","S2"]},{cid:"paltos_n3",tids:["S1"]}] },
+    { match:/melbace4v4|valencia/i,            ids:[{cid:"valencia", tids:["OP1","OP2"]}] },
+    { match:/melbace1|^paltos\s*\(/i,          ids:[{cid:"paltos_v", tids:["T1","T2","T3","T4"]},{cid:"paltos_n12",tids:["T1","T2"]}] },
+    { match:/control.*helada/i,                ids:[] },
+  ];
+
+  // Registra m³ para un sector específico
+  const registrarSector = (newReg, fecha, cultId, sectorId, m3, ec, ph, notas) => {
+    const c = CULTIVOS.find(x=>x.id===cultId);
+    if(!c) return;
+    const turnos = sectorId ? c.turnos.filter(t=>t.id===sectorId) : c.turnos;
+    const haTotal = turnos.reduce((a,t)=>a+t.ha, 0);
+    for(const t of turnos){
+      const key = `${cultId}__${t.id}`;
+      if(!newReg[fecha]) newReg[fecha]={};
+      newReg[fecha][key] = {
+        m3Real: (m3 * (t.ha/haTotal)).toFixed(1),
+        ec: ec||"", ph: ph||"",
+        notas: notas||"OlivePlus",
+      };
     }
-    return result;
   };
 
-  // ── Parser principal — detecta formato OlivePlus o CSV genérico ──
+  // ── Parser principal ───────────────────────────────────────
   const parseCSV = (text) => {
     const lines = text.trim().split(/\r?\n/).filter(l=>l.trim());
     if(lines.length < 2) return { ok:false, msg:"El archivo no tiene datos suficientes." };
 
-    // Detectar si es formato OlivePlus (tiene columna "Nombre" + "Volumen" sin fecha)
-    const hdr0 = lines[0].toLowerCase();
-    const hdr1 = lines.length>1 ? lines[1].toLowerCase() : "";
-    const isOlivePlus = (hdr0.includes("riego acumulado")||hdr0.includes("olive")) ||
-                        (hdr1.includes("nombre")&&hdr1.includes("volumen")&&!hdr1.includes("fecha"));
+    // Detectar formato: ¿tiene "Linea" → reporte por sectores? ¿o "Riego acumulado" → equipo?
+    const allText = lines.join(" ").toLowerCase();
+    const isSectorReport  = /linea\s*[12]/i.test(allText);
+    const isEquipoReport  = /melbace[24]v4|paltos.*melbace1/i.test(allText);
 
-    // ── Formato OlivePlus acumulado (sin fecha diaria) ──────
-    if(isOlivePlus){
-      // Buscar línea de encabezado (contiene "Nombre")
-      let hdrIdx = lines.findIndex(l=>l.toLowerCase().includes("nombre")&&l.toLowerCase().includes("volumen"));
-      if(hdrIdx<0) return { ok:false, msg:"No se encontró el encabezado de OlivePlus.\nEspero una columna 'Nombre' y una 'Volumen'." };
-      const header = lines[hdrIdx].split(/\t/).map(h=>h.trim().toLowerCase()
-        .replace(/[áàä]/g,"a").replace(/[éèë]/g,"e").replace(/[íìï]/g,"i")
-        .replace(/[óòö]/g,"o").replace(/[úùü]/g,"u").replace(/\s+/g,"_").replace(/[():]/g,""));
-      const iNombre = header.findIndex(h=>h==="nombre");
-      const iVol    = header.findIndex(h=>h==="volumen"||h==="vol");
-      const iEC     = header.findIndex(h=>/^ec/.test(h)||/conductividad/.test(h));
-      const iPH     = header.findIndex(h=>h==="ph");
-      if(iNombre<0||iVol<0) return { ok:false, msg:`Columnas encontradas: ${header.join(", ")}\nNecesito al menos 'Nombre' y 'Volumen'.` };
+    // Buscar línea de encabezado (contiene "Nombre" y "Volumen")
+    let hdrIdx = lines.findIndex(l=>/nombre/i.test(l)&&/volumen/i.test(l));
+    if(hdrIdx<0) return { ok:false, msg:"No se encontró encabezado con 'Nombre' y 'Volumen'." };
 
-      // Extraer rango de fechas del título (ej: "22/04/2026 - 29/04/2026")
-      let fechaImport = todayStr();
-      const tituloFecha = lines.slice(0,hdrIdx).join(" ");
-      const mFecha = tituloFecha.match(/(\d{2}\/\d{2}\/\d{4})\s*[-–]\s*(\d{2}\/\d{2}\/\d{4})/);
-      if(mFecha){
-        const [d,mo,y] = mFecha[2].split("/");
-        fechaImport = `${y}-${mo}-${d}`;
-      }
+    const cols0 = lines[hdrIdx].split(/\t/);
+    const iNombre = cols0.findIndex(h=>/nombre/i.test(h));
+    const iVol    = cols0.findIndex(h=>/^volumen$/i.test(h.trim()));
+    if(iNombre<0||iVol<0) return { ok:false, msg:`Columnas: ${cols0.join(", ")}` };
 
-      let imported=0; const newReg={};
-      for(let i=hdrIdx+1;i<lines.length;i++){
-        const cols = lines[i].split(/\t/);
-        if(cols.length<2) continue;
-        const nombre = cols[iNombre]?.trim()||"";
-        const m3 = parseFloat((cols[iVol]?.trim()||"0").replace(",","."));
-        if(!nombre||isNaN(m3)||m3===0) continue;
+    // Extraer fecha final del rango del título (ej: "22/04/2026 - 29/04/2026")
+    let fechaImport = todayStr();
+    const titulo = lines.slice(0, hdrIdx).join(" ");
+    const mf = titulo.match(/(\d{2}\/\d{2}\/\d{4})\s*[-–]\s*(\d{2}\/\d{2}\/\d{4})/);
+    if(mf){ const [d,mo,y]=mf[2].split("/"); fechaImport=`${y}-${mo}-${d}`; }
 
-        const rule = OLIVE_MAP.find(r=>r.match.test(nombre));
-        if(!rule||rule.ids.length===0) continue;
+    let imported=0;
+    const newReg={};
+    const sinMatch=[];
 
-        const notas = `OlivePlus: ${nombre}`;
-        const dist = distribuirM3(rule.ids, m3, fechaImport, notas);
-        if(!newReg[fechaImport]) newReg[fechaImport]={};
-        Object.assign(newReg[fechaImport], dist);
-        imported += Object.keys(dist).length;
-      }
-      if(imported===0)
-        return { ok:false, msg:"No se pudo importar ninguna fila.\nEquipos en archivo: "+
-          lines.slice(hdrIdx+1).map(l=>l.split("\t")[0]).filter(Boolean).join(", ")+
-          "\nEquipos reconocidos: Citricos MELBACE2V4 · Naranjos Valencia MELBACE4V4 · Paltos MELBACE1" };
+    for(let i=hdrIdx+1; i<lines.length; i++){
+      const row   = lines[i].split(/\t/);
+      const nombre= row[iNombre]?.trim()||"";
+      const m3    = parseFloat((row[iVol]?.trim()||"0").replace(",","."));
+      if(!nombre) continue;
+      if(isNaN(m3)||m3===0){ sinMatch.push(`${nombre} (m³=0, ignorado)`); continue; }
 
-      setRegistro(p=>{ const m={...p}; for(const[d,v] of Object.entries(newReg)) m[d]={...m[d],...v}; return m; });
-      return { ok:true, msg:`✅ ${imported} sectores importados desde OlivePlus (${fechaImport}).\nVolumen distribuido proporcionalmente por hectárea entre sectores.` };
-    }
-
-    // ── Formato CSV genérico con columna fecha ──────────────
-    const header = lines[0].split(/[;,\t]/).map(h=>h.trim().toLowerCase()
-      .replace(/[áàä]/g,"a").replace(/[éèë]/g,"e").replace(/[íìï]/g,"i")
-      .replace(/[óòö]/g,"o").replace(/[úùü]/g,"u").replace(/\s+/g,"_"));
-    const iDate  = header.findIndex(h=>/fecha|date|dia/.test(h));
-    const iSec   = header.findIndex(h=>/sector|turno|bloque|nombre|equipo/.test(h));
-    const iM3    = header.findIndex(h=>/^m3|^m³|volumen|^vol|agua/.test(h));
-    const iEC    = header.findIndex(h=>/^ec/.test(h));
-    const iPH    = header.findIndex(h=>h==="ph");
-    const iNotas = header.findIndex(h=>/nota|observ/.test(h));
-    if(iDate<0||iSec<0||iM3<0)
-      return { ok:false, msg:`Columnas detectadas: ${header.join(", ")}\nNecesito: fecha · sector (o nombre) · m3 (o volumen)` };
-
-    let imported=0; const newReg={};
-    for(let i=1;i<lines.length;i++){
-      const cols = lines[i].split(/[;,\t]/);
-      if(cols.length<3) continue;
-      const rawDate = cols[iDate]?.trim();
-      const rawSec  = cols[iSec]?.trim();
-      const rawM3   = parseFloat((cols[iM3]?.trim()||"").replace(",","."));
-      if(!rawDate||isNaN(rawM3)) continue;
-      let fecha = rawDate;
-      const dm = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-      if(dm) fecha = `${dm[3].length===2?"20"+dm[3]:dm[3]}-${dm[2].padStart(2,"0")}-${dm[1].padStart(2,"0")}`;
-
-      // Try OlivePlus map first, then direct turno match
-      const rule = OLIVE_MAP.find(r=>r.match.test(rawSec));
-      if(rule&&rule.ids.length>0){
-        const dist = distribuirM3(rule.ids, rawM3, fecha, "OlivePlus CSV");
-        if(!newReg[fecha]) newReg[fecha]={};
-        Object.assign(newReg[fecha], dist);
-        imported += Object.keys(dist).length;
-        continue;
-      }
-      for(const c of CULTIVOS){
-        for(const t of c.turnos){
-          if(t.label.toLowerCase().includes(rawSec.toLowerCase())||rawSec.toLowerCase().includes(t.id.toLowerCase())){
-            const key=`${c.id}__${t.id}`;
-            if(!newReg[fecha]) newReg[fecha]={};
-            newReg[fecha][key]={ m3Real:rawM3, ec:iEC>=0?cols[iEC]?.trim():"", ph:iPH>=0?cols[iPH]?.trim():"", notas:iNotas>=0?cols[iNotas]?.trim():"CSV" };
-            imported++; break;
+      if(isSectorReport){
+        // Reporte granular por sector — usar OLIVE_SECTOR_MAP
+        const rule = OLIVE_SECTOR_MAP.find(r=>r.match.test(nombre));
+        if(!rule){ sinMatch.push(nombre); continue; }
+        if(!rule.cultId) continue; // ignorar (heladas, etc.)
+        registrarSector(newReg, fechaImport, rule.cultId, rule.sectorId, m3, "", "", `OlivePlus: ${nombre}`);
+        imported++;
+      } else {
+        // Reporte acumulado por equipo — usar OLIVE_EQUIPO_MAP
+        const rule = OLIVE_EQUIPO_MAP.find(r=>r.match.test(nombre));
+        if(!rule||!rule.ids.length){ sinMatch.push(nombre); continue; }
+        for(const {cid, tids} of rule.ids){
+          const c = CULTIVOS.find(x=>x.id===cid);
+          if(!c) continue;
+          const turnos = tids.map(tid=>c.turnos.find(t=>t.id===tid)).filter(Boolean);
+          const haGrupo = turnos.reduce((a,t)=>a+t.ha,0);
+          // Porción proporcional de este cultivo dentro del equipo
+          const haEquipo = rule.ids.reduce((a,{cid:cid2,tids:tids2})=>{
+            const c2=CULTIVOS.find(x=>x.id===cid2); if(!c2) return a;
+            return a+tids2.reduce((b,tid)=>{const t=c2.turnos.find(x=>x.id===tid);return b+(t?t.ha:0);},0);
+          },0);
+          const m3Cultivo = m3 * (haGrupo/haEquipo);
+          for(const t of turnos){
+            const key=`${cid}__${t.id}`;
+            if(!newReg[fechaImport]) newReg[fechaImport]={};
+            newReg[fechaImport][key]={ m3Real:(m3Cultivo*(t.ha/haGrupo)).toFixed(1), ec:"", ph:"", notas:`OlivePlus: ${nombre}` };
           }
+          imported++;
         }
       }
     }
-    if(imported===0) return { ok:false, msg:"No se pudo importar ninguna fila. Verifica el formato del archivo." };
+
+    if(imported===0){
+      const sugerencia = isSectorReport
+        ? "Sectores reconocidos: Linea 2 V1+V2, Linea 2 V3-V6, Linea 1 V1-V3, Linea 3 V1-V2"
+        : "Equipos reconocidos: Citricos (MELBACE2V4), Naranjos Valencia (MELBACE4V4), Paltos (MELBACE1)";
+      return { ok:false, msg:`No se importó ninguna fila.\nSin coincidencia: ${sinMatch.join(", ")}\n${sugerencia}` };
+    }
+
     setRegistro(p=>{ const m={...p}; for(const[d,v] of Object.entries(newReg)) m[d]={...m[d],...v}; return m; });
-    return { ok:true, msg:`✅ ${imported} registros importados.` };
+    const tipo = isSectorReport?"sectores (reporte detallado)":"equipos (reporte acumulado)";
+    const noMatch = sinMatch.filter(s=>!s.includes("m³=0")).length;
+    return {
+      ok:true,
+      msg:`✅ ${imported} ${tipo} importados → fecha ${fechaImport}${noMatch>0?`\nIgnorados sin coincidencia: ${sinMatch.filter(s=>!s.includes("m³=0")).join(", ")}`:""}`
+    };
   };
 
   const handleCSVFile = async (file) => {
