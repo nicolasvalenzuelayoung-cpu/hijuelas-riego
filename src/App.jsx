@@ -145,6 +145,16 @@ tbody tr:hover td{background:rgba(194,98,45,0.025)!important;}
 .fade{animation:fadeUp 0.35s ease forwards;}
 @keyframes drip{0%,100%{transform:translateY(0)}50%{transform:translateY(5px)}}
 .drip{animation:drip 1.6s ease-in-out infinite;display:inline-block;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.pulse{animation:pulse 2s ease-in-out infinite;}
+.no-print{}
+@media print{
+  .no-print{display:none!important;}
+  .print-only{display:block!important;}
+  *{background:white!important;color:black!important;box-shadow:none!important;}
+  .fell,.serif{font-family:Georgia,serif!important;}
+  .mono{font-family:monospace!important;}
+}
 `;
 
 export default function App() {
@@ -158,7 +168,65 @@ export default function App() {
   const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,kcDeFecha(c.id)])));
   const [kcAuto,  setKcAuto]  = useState(true);
 
-  // ── Datos manuales estación FieldClimate ───────────────────
+  // ── Bitácora de campo ─────────────────────────────────────
+  const BITA_TIPOS = [
+    {k:"helada",   l:"🌡 Helada",         c:"#4A7FA5"},
+    {k:"lluvia",   l:"🌧 Lluvia fuerte",   c:"#4A7FA5"},
+    {k:"viento",   l:"💨 Viento fuerte",   c:"#9C7A5A"},
+    {k:"plaga",    l:"🐛 Plaga / Enfermedad",c:"#8B0000"},
+    {k:"cosecha",  l:"🧺 Cosecha",         c:"#3D6B35"},
+    {k:"poda",     l:"✂ Poda",            c:"#5C3D28"},
+    {k:"ferti",    l:"💧 Fertilización",   c:"#B8860B"},
+    {k:"averia",   l:"⚙ Avería equipo",   c:"#8B0000"},
+    {k:"otro",     l:"📝 Otro",            c:"#9C7A5A"},
+  ];
+  const [bitacora, setBitacora] = useState(()=>{
+    try{ return JSON.parse(localStorage.getItem("hijuelas_bitacora")||"[]"); }
+    catch{ return []; }
+  });
+  const [bitaForm, setBitaForm] = useState(false);
+  const [bitaNew,  setBitaNew]  = useState({fecha:todayStr(),tipo:"otro",cultivos:"todos",nota:""});
+  useEffect(()=>{
+    try{ localStorage.setItem("hijuelas_bitacora",JSON.stringify(bitacora)); }catch(e){}
+  },[bitacora]);
+
+  // ── Alertas automáticas ───────────────────────────────────
+  const alertas = weather ? (()=>{
+    const alerts = [];
+    const futRows = wRows.filter(r=>isFuture(r.date)).slice(0,3);
+    // Helada: T°mín < 4°C en próximos 3 días
+    const heladaRow = futRows.find(r=>getTmin(r)<4);
+    if(heladaRow) alerts.push({
+      tipo:"helada", nivel:"rojo",
+      msg:`⚠ Riesgo de helada: T°mín ${getTmin(heladaRow).toFixed(1)}°C el ${fmtShort(heladaRow.date)}`,
+      accion:"Activar control de heladas"
+    });
+    // ETo muy alto: >5.5 mm/día hoy o mañana
+    const etoCritico = wRows.find(r=>(isToday(r.date)||isFuture(r.date))&&getEto(r)>5.5);
+    if(etoCritico) alerts.push({
+      tipo:"eto_alto", nivel:"naranja",
+      msg:`☀ ETo elevado: ${getEto(etoCritico).toFixed(2)} mm/día ${isToday(etoCritico.date)?"hoy":fmtShort(etoCritico.date)}`,
+      accion:"Verificar horas de riego"
+    });
+    // Lluvia significativa próximas 48h
+    const lluviaRow = futRows.slice(0,2).find(r=>r.precip>8||(r.precipProb&&r.precipProb>70));
+    if(lluviaRow) alerts.push({
+      tipo:"lluvia", nivel:"azul",
+      msg:`🌧 Lluvia prevista: ${lluviaRow.precip.toFixed(1)}mm ${lluviaRow.precipProb?`(${lluviaRow.precipProb}% prob.)`:""} el ${fmtShort(lluviaRow.date)}`,
+      accion:"Considerar suspender o reducir riego"
+    });
+    // Balance hídrico: déficit acumulado >15% de lo calculado
+    const past = wRows.filter(r=>!isFuture(r.date));
+    const totCalcPast = CULTIVOS.reduce((a,c)=>a+past.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
+    const totRealPast = CULTIVOS.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+Object.entries(regSem).reduce((bb,[wk,v])=>bb+(parseFloat(v[`${c.id}__${t.id}`]?.m3Real||0)||0),0),0),0);
+    const deficPct = totCalcPast>0&&totRealPast>0?((totCalcPast-totRealPast)/totCalcPast*100):null;
+    if(deficPct!==null&&deficPct>15) alerts.push({
+      tipo:"deficit", nivel:"naranja",
+      msg:`💧 Déficit hídrico acumulado: ${deficPct.toFixed(0)}% bajo lo calculado (${(totCalcPast-totRealPast).toFixed(0)} m³)`,
+      accion:"Revisar programa de riego semanal"
+    });
+    return alerts;
+  })() : [];
   // Permite ingresar datos reales de "Nueva Purehue" [0020F829]
   // y recalcular ETo FAO-PM con valores medidos en vez de ERA5
   const [stData, setStData] = useState(() => {
@@ -477,7 +545,7 @@ export default function App() {
   const fetchWeather = useCallback(async()=>{
     setLoading(true); setError(null);
     try{
-      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max&timezone=America%2FSantiago&past_days=7&forecast_days=3`);
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max,precipitation_probability_max&timezone=America%2FSantiago&past_days=7&forecast_days=7`);
       if(!r.ok) throw new Error("HTTP "+r.status);
       setWeather((await r.json()).daily);
       setLastUpd(new Date().toLocaleTimeString("es-CL"));
@@ -495,6 +563,7 @@ export default function App() {
     precip:weather.precipitation_sum[i]||0,
     tmax:weather.temperature_2m_max[i], tmin:weather.temperature_2m_min[i],
     wind:weather.wind_speed_10m_max[i], hum:weather.relative_humidity_2m_max[i],
+    precipProb:weather.precipitation_probability_max?.[i]||0,
   })) : [];
 
   const todayRow = wRows.find(r=>isToday(r.date));
@@ -560,6 +629,27 @@ export default function App() {
         )}
       </div>
 
+      {/* ── Alertas automáticas ── */}
+      {alertas.length>0&&(
+        <div style={{background:"#1a0f08",borderBottom:"1px solid rgba(92,61,40,0.4)"}}>
+          {alertas.map((a,i)=>(
+            <div key={i} style={{
+              display:"flex",alignItems:"center",justifyContent:"space-between",
+              padding:"7px 32px",
+              borderBottom:i<alertas.length-1?"1px solid rgba(255,255,255,0.05)":"none",
+              background:a.nivel==="rojo"?"rgba(139,0,0,0.3)":a.nivel==="azul"?"rgba(74,127,165,0.2)":"rgba(184,134,11,0.2)",
+            }}>
+              <span className="mono" style={{fontSize:11,color:a.nivel==="rojo"?"#F7C1C1":a.nivel==="azul"?"#B5D4F4":"#FAC775"}}>
+                {a.msg}
+              </span>
+              <span className="serif" style={{fontSize:11,color:"rgba(242,235,217,0.45)",fontStyle:"italic",marginLeft:16,whiteSpace:"nowrap"}}>
+                → {a.accion}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ═══════════════ NAV BAR ═══════════════ */}
       <div style={{background:"rgba(232,220,191,0.6)",borderBottom:"1px solid rgba(92,61,40,0.28)",padding:"0 32px",display:"flex",alignItems:"center",gap:24,flexWrap:"wrap",backdropFilter:"blur(4px)"}}>
         <div style={{display:"flex",gap:8}}>
@@ -569,7 +659,7 @@ export default function App() {
           ))}
         </div>
         <div style={{width:1,height:26,background:"rgba(92,61,40,0.25)"}}/>
-        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["graficos","📈 Gráficos"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
+        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["balance","💧 Balance"],["graficos","📈 Gráficos"],["bitacora","📓 Bitácora"],["registro","📋 Registro"],["planos","📐 Planos"]].map(([k,l])=>(
           <button key={k} className={`tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -933,7 +1023,14 @@ export default function App() {
             {/* ──── PROGRAMA DEL DÍA ──── */}
             {tab==="hoy"&&todayRow&&(
               <div className="fade">
-                <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Programa de Riego</h2>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,flexWrap:"wrap",gap:10}}>
+                  <h2 className="fell" style={{fontSize:24,fontWeight:400}}>Programa de Riego</h2>
+                  <button onClick={()=>window.print()} className="serif no-print"
+                    style={{fontSize:14,padding:"6px 16px",border:"1px solid rgba(92,61,40,0.35)",borderRadius:2,
+                      background:"transparent",color:"#2C1810",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                    🖨 Imprimir programa
+                  </button>
+                </div>
                 <div className="serif" style={{fontSize:16,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{fmtFull(todayStr())} · ETo {getEto(todayRow).toFixed(2)} mm/día</div>
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {visibles.map(c=>{
@@ -1102,6 +1199,218 @@ export default function App() {
                 })()}
               </div>
             )}
+
+            {/* ──── BALANCE HÍDRICO ──── */}
+            {tab==="balance"&&(()=>{
+              const allWeeks = getWeeks(wRows);
+              const cultF = visibles;
+              // Acumulado por semana
+              let cumCalc=0, cumReal=0;
+              const weekData = allWeeks.map(wk=>{
+                const days=wRows.filter(r=>isoWeek(r.date)===wk&&!isFuture(r.date));
+                const eto_=days.reduce((a,r)=>a+getEto(r),0);
+                const calc_=cultF.reduce((a,c)=>a+days.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
+                const real_=cultF.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+(parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0),0),0);
+                const precip_=days.reduce((a,r)=>a+getPrecip(r),0);
+                cumCalc+=calc_; if(real_>0) cumReal+=real_;
+                const deficit=cumCalc-cumReal;
+                return{wk,eto:eto_,calc:calc_,real:real_,precip:precip_,cumCalc,cumReal,deficit,hasReal:real_>0};
+              });
+              const lastW=weekData[weekData.length-1];
+              const deficitActual=lastW?.deficit||0;
+              const eficTotal=lastW?.cumCalc>0&&lastW?.cumReal>0?(lastW.cumReal/lastW.cumCalc*100):null;
+              const diasSinLluvia=wRows.filter(r=>!isFuture(r.date)&&getPrecip(r)<1).length;
+              const etoSemana=wRows.filter(r=>isoWeek(r.date)===isoWeek(todayStr())&&!isFuture(r.date)).reduce((a,r)=>a+getEto(r),0);
+
+              // SVG balance chart
+              const W=860, H=260, PL=62, PR=20, PT=28, PB=50;
+              const IW=W-PL-PR, IH=H-PT-PB;
+              const wks=weekData.filter(w=>w.calc>0);
+              const maxVol=Math.max(...wks.map(w=>Math.max(w.calc,w.real)),100)*1.15;
+              const barW_=Math.min(32,IW/Math.max(wks.length*2,1)*0.8);
+
+              return(
+                <div className="fade">
+                  <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Balance Hídrico del Predio</h2>
+                  <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic",marginBottom:20}}>
+                    Seguimiento del déficit o exceso de agua acumulado por semana · Temporada {new Date().getFullYear()}
+                  </div>
+
+                  {/* KPI cards */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:24}}>
+                    {[
+                      {l:"ETo semana actual",v:etoSemana.toFixed(1)+" mm",c:"#C2622D",ico:"☀"},
+                      {l:"Déficit acumulado",v:`${deficitActual>0?"+":""}${deficitActual.toFixed(0)} m³`,
+                        c:deficitActual>500?"#8B0000":deficitActual>200?"#B8860B":"#3D6B35",ico:"💧"},
+                      {l:"Eficiencia temporada",v:eficTotal?eficTotal.toFixed(0)+"%":"—",
+                        c:eficTotal>=85?"#3D6B35":eficTotal>=70?"#B8860B":"#8B0000",ico:"⚙"},
+                      {l:"Días sin lluvia",v:diasSinLluvia+" días",c:diasSinLluvia>20?"#8B0000":diasSinLluvia>10?"#B8860B":"#3D6B35",ico:"🌤"},
+                      {l:"m³ calculados total",v:lastW?.cumCalc.toFixed(0)||"—",c:"#B8860B",ico:"📐"},
+                      {l:"m³ reales total",v:lastW?.cumReal>0?lastW.cumReal.toFixed(0):"—",c:"#3D6B35",ico:"✓"},
+                    ].map(s=>(
+                      <div key={s.l} className="card" style={{padding:"12px 16px"}}>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4,letterSpacing:0.5}}>{s.ico} {s.l.toUpperCase()}</div>
+                        <div className="serif" style={{fontSize:22,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Weekly volume chart */}
+                  <div className="card" style={{padding:"0 0 12px",marginBottom:20,overflow:"hidden"}}>
+                    <div style={{padding:"14px 20px 10px",borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
+                      <div className="fell" style={{fontSize:18,fontWeight:400}}>Riego semanal — Calculado vs Real</div>
+                      <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>BARRAS NARANJAS = calculado FAO-PM · BARRAS VERDES = real aplicado · Diferencia = déficit (-) o exceso (+)</div>
+                    </div>
+                    <div style={{overflowX:"auto",padding:"8px 0 0"}}>
+                      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{display:"block"}}>
+                        {/* Grid */}
+                        {[0,0.25,0.5,0.75,1].map(f=>{
+                          const y=PT+IH*(1-f);
+                          const v=Math.round(maxVol*f);
+                          return(<g key={f}>
+                            <line x1={PL} x2={W-PR} y1={y} y2={y} stroke="rgba(92,61,40,0.1)" strokeDasharray="4,4"/>
+                            <text x={PL-4} y={y+4} textAnchor="end" fontSize={9} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{v}</text>
+                          </g>);
+                        })}
+                        <line x1={PL} x2={PL} y1={PT} y2={H-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
+                        <line x1={PL} x2={W-PR} y1={H-PB} y2={H-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
+                        {wks.map((w,i)=>{
+                          const x=PL+i*(IW/wks.length)+(IW/wks.length)*0.1;
+                          const bw=Math.min(30,IW/wks.length*0.35);
+                          const hCalc=(w.calc/maxVol)*IH, hReal=(w.hasReal?(w.real/maxVol)*IH:0);
+                          const isCurr=w.wk===isoWeek(todayStr());
+                          const pct=w.hasReal&&w.calc>0?(w.real/w.calc*100):null;
+                          const {start,end}=weekDates(w.wk);
+                          const lbl=new Date(end+"T12:00:00").toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit"});
+                          return(<g key={w.wk}>
+                            {isCurr&&<rect x={PL+i*(IW/wks.length)} width={IW/wks.length} y={PT} height={IH} fill="rgba(184,134,11,0.04)"/>}
+                            <rect x={x} y={H-PB-hCalc} width={bw} height={hCalc} fill={isCurr?"#B8860B":"rgba(184,134,11,0.35)"} rx={2} stroke="#B8860B" strokeWidth={0.5}/>
+                            {w.hasReal&&<rect x={x+bw+2} y={H-PB-hReal} width={bw} height={hReal}
+                              fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} rx={2} opacity={0.9}/>}
+                            {pct!=null&&<text x={x+bw+2+bw/2} y={H-PB-hReal-5} textAnchor="middle" fontSize={8}
+                              fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} fontFamily="'DM Mono',monospace" fontWeight="600">{pct.toFixed(0)}%</text>}
+                            <text x={x+bw} y={H-PB+14} textAnchor="middle" fontSize={8.5} fill={isCurr?"#C2622D":"#9C7A5A"} fontFamily="'DM Mono',monospace">{lbl}</text>
+                          </g>);
+                        })}
+                        <g transform={`translate(${PL},${PT-10})`}>
+                          <rect x={0} y={0} width={10} height={8} fill="rgba(184,134,11,0.5)" stroke="#B8860B" strokeWidth={0.5} rx={1}/>
+                          <text x={14} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Calculado (m³)</text>
+                          <rect x={110} y={0} width={10} height={8} fill="#3D6B35" rx={1}/>
+                          <text x={124} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Real OlivePlus (m³)</text>
+                          <text x={260} y={8} fontSize={8.5} fill="#9C7A5A" fontFamily="'DM Mono',monospace">% = eficiencia semana</text>
+                        </g>
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Cumulative deficit chart */}
+                  {weekData.some(w=>w.hasReal)&&(()=>{
+                    const H2=200, wHas=weekData.filter(w=>w.calc>0);
+                    const maxAcum=Math.max(...wHas.map(w=>Math.max(w.cumCalc,w.cumReal)),100)*1.1;
+                    const linePath=(pts,getY)=>pts.map((w,i)=>{
+                      const x=PL+i*(IW/(pts.length-1));
+                      const y=PT+(H2-PT-PB)*(1-getY(w)/maxAcum);
+                      return`${i===0?"M":"L"}${x},${y}`;
+                    }).join(" ");
+                    return(
+                      <div className="card" style={{padding:"0 0 12px",overflow:"hidden"}}>
+                        <div style={{padding:"14px 20px 10px",borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
+                          <div className="fell" style={{fontSize:18,fontWeight:400}}>Balance Acumulado de Temporada</div>
+                          <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>
+                            ÁREA NARANJA = calculado acumulado · LÍNEA VERDE = real aplicado · BRECHA = déficit acumulado
+                          </div>
+                        </div>
+                        <div style={{overflowX:"auto",padding:"8px 0 0"}}>
+                          <svg width="100%" viewBox={`0 0 ${W} ${H2}`} preserveAspectRatio="xMidYMid meet" style={{display:"block"}}>
+                            {[0,0.5,1].map(f=>{
+                              const y=PT+(H2-PT-PB)*(1-f);
+                              return(<g key={f}>
+                                <line x1={PL} x2={W-PR} y1={y} y2={y} stroke="rgba(92,61,40,0.1)" strokeDasharray="4,4"/>
+                                <text x={PL-4} y={y+4} textAnchor="end" fontSize={9} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{Math.round(maxAcum*f)}</text>
+                              </g>);
+                            })}
+                            <line x1={PL} x2={PL} y1={PT} y2={H2-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
+                            <line x1={PL} x2={W-PR} y1={H2-PB} y2={H2-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
+                            {wHas.length>1&&<>
+                              <path d={`${linePath(wHas,w=>w.cumCalc)} L${PL+IW},${H2-PB} L${PL},${H2-PB} Z`}
+                                fill="rgba(184,134,11,0.18)" stroke="#B8860B" strokeWidth={2}/>
+                              <path d={`${linePath(wHas,w=>w.cumReal)}`}
+                                fill="none" stroke="#3D6B35" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"/>
+                              {wHas.map((w,i)=>{
+                                const x=PL+i*(IW/(wHas.length-1));
+                                const y=PT+(H2-PT-PB)*(1-w.cumReal/maxAcum);
+                                return<circle key={w.wk} cx={x} cy={y} r={4} fill={w.hasReal?"#3D6B35":"transparent"} stroke="#3D6B35" strokeWidth={1.5}/>;
+                              })}
+                              {/* Deficit label at end */}
+                              {(()=>{
+                                const last=wHas[wHas.length-1];
+                                const yC=PT+(H2-PT-PB)*(1-last.cumCalc/maxAcum);
+                                const yR=PT+(H2-PT-PB)*(1-last.cumReal/maxAcum);
+                                return(<g>
+                                  <text x={W-PR-4} y={yC-6} textAnchor="end" fontSize={9} fill="#B8860B" fontFamily="'DM Mono',monospace" fontWeight="600">{last.cumCalc.toFixed(0)} m³ calc.</text>
+                                  {last.cumReal>0&&<>
+                                    <text x={W-PR-4} y={yR+14} textAnchor="end" fontSize={9} fill="#3D6B35" fontFamily="'DM Mono',monospace" fontWeight="600">{last.cumReal.toFixed(0)} m³ real</text>
+                                    <text x={W-PR-4} y={(yC+yR)/2+4} textAnchor="end" fontSize={9} fill={last.deficit>200?"#8B0000":"#9C7A5A"} fontFamily="'DM Mono',monospace">
+                                      {last.deficit>0?"Déficit":"Exceso"}: {Math.abs(last.deficit).toFixed(0)} m³
+                                    </text>
+                                  </>}
+                                </g>);
+                              })()}
+                            </>}
+                            {wHas.map((w,i)=>{
+                              const x=PL+i*(IW/(wHas.length-1));
+                              const {end}=weekDates(w.wk);
+                              return<text key={w.wk} x={x} y={H2-PB+14} textAnchor="middle" fontSize={8.5} fill="#9C7A5A" fontFamily="'DM Mono',monospace">
+                                {new Date(end+"T12:00:00").toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit"})}
+                              </text>;
+                            })}
+                          </svg>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Por cultivo */}
+                  <div style={{marginTop:20}}>
+                    <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2.5,marginBottom:12}}>BALANCE POR CULTIVO · ACUMULADO TEMPORADA</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+                      {cultF.map(c=>{
+                        const allD=wRows.filter(r=>!isFuture(r.date));
+                        const calcT=allD.reduce((a,r)=>a+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((b,t)=>b+t.volTotal,0),0);
+                        const realT=Object.entries(regSem).reduce((a,[wk,v])=>
+                          a+c.turnos.reduce((b,t)=>b+(parseFloat(v[`${c.id}__${t.id}`]?.m3Real||0)||0),0),0);
+                        const pct=calcT>0&&realT>0?(realT/calcT*100):null;
+                        const def=calcT-realT;
+                        const barPct=pct?Math.min(pct,150):0;
+                        return(
+                          <div key={c.id} className="card" style={{padding:"14px 16px",borderLeft:`3px solid ${c.color}`}}>
+                            <div className="fell" style={{fontSize:15,color:"#2C1810",marginBottom:8}}>{c.emoji} {c.label}</div>
+                            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                              <div><div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>CALCULADO</div>
+                                <span className="serif" style={{fontWeight:700,fontSize:18,color:"#B8860B"}}>{calcT.toFixed(0)} m³</span></div>
+                              {realT>0&&<div style={{textAlign:"right"}}><div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>REAL</div>
+                                <span className="serif" style={{fontWeight:700,fontSize:18,color:"#3D6B35"}}>{realT.toFixed(0)} m³</span></div>}
+                            </div>
+                            {/* Progress bar */}
+                            <div style={{height:6,background:"rgba(92,61,40,0.1)",borderRadius:3,marginBottom:6,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${Math.min(barPct,100)}%`,background:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000",borderRadius:3,transition:"width 0.5s"}}/>
+                            </div>
+                            <div style={{display:"flex",justifyContent:"space-between"}}>
+                              <span className="mono" style={{fontSize:9,color:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}}>
+                                {pct?pct.toFixed(0)+"%":"Sin datos reales"}
+                              </span>
+                              {realT>0&&<span className="mono" style={{fontSize:9,color:def>0?"#8B0000":"#3D6B35"}}>
+                                {def>0?"▼":""}{def<0?"▲":""} {Math.abs(def).toFixed(0)} m³ {def>0?"déficit":"exceso"}
+                              </span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ──── GRÁFICOS ──── */}
             {tab==="graficos"&&(()=>{
@@ -1481,6 +1790,150 @@ export default function App() {
                 </div>
               );
             })()}
+
+            {/* ──── BITÁCORA DE CAMPO ──── */}
+            {tab==="bitacora"&&(
+              <div className="fade">
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
+                  <div>
+                    <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:2}}>Bitácora de Campo</h2>
+                    <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic"}}>
+                      Registro de eventos del predio · Heladas · Plagas · Cosecha · Floraciones · Aplicaciones
+                    </div>
+                  </div>
+                  <button onClick={()=>setBitaForm(p=>!p)} className="serif"
+                    style={{fontSize:15,padding:"7px 18px",border:"1px solid rgba(92,61,40,0.35)",borderRadius:2,
+                      background:bitaForm?"#2C1810":"transparent",color:bitaForm?"#F2EBD9":"#2C1810",cursor:"pointer"}}>
+                    {bitaForm?"✕ Cancelar":"+ Nuevo evento"}
+                  </button>
+                </div>
+
+                {/* Form */}
+                {bitaForm&&(
+                  <div className="card" style={{padding:"18px 22px",marginBottom:20,border:"1px solid rgba(92,61,40,0.25)"}}>
+                    <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:14}}>NUEVO EVENTO</div>
+                    <div style={{display:"grid",gridTemplateColumns:"160px 180px 1fr",gap:12,marginBottom:12}}>
+                      <div>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>FECHA</div>
+                        <input type="date" value={bitaNew.fecha}
+                          onChange={e=>setBitaNew(p=>({...p,fecha:e.target.value}))}
+                          style={{fontFamily:"'DM Mono',monospace",fontSize:12,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 8px",borderRadius:2,width:"100%"}}/>
+                      </div>
+                      <div>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>TIPO DE EVENTO</div>
+                        <select value={bitaNew.tipo} onChange={e=>setBitaNew(p=>({...p,tipo:e.target.value}))}
+                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}>
+                          {[["helada","❄ Helada"],["lluvia","🌧 Lluvia fuerte"],["floracion","🌸 Floración"],
+                            ["cuaja","🫐 Cuaja"],["cosecha","🧺 Cosecha"],["poda","✂ Poda"],
+                            ["fertilizacion","🧪 Fertilización"],["plaga","🐛 Plaga/Enfermedad"],
+                            ["riego_extra","💧 Riego extraordinario"],["visita","👤 Visita técnica"],["otro","📌 Otro"]].map(([v,l])=>(
+                            <option key={v} value={v}>{l}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>CULTIVO AFECTADO</div>
+                        <select value={bitaNew.cultivos} onChange={e=>setBitaNew(p=>({...p,cultivos:e.target.value}))}
+                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}>
+                          <option value="todos">Todo el predio</option>
+                          {CULTIVOS.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{marginBottom:12}}>
+                      <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>DESCRIPCIÓN / OBSERVACIÓN</div>
+                      <textarea value={bitaNew.nota} onChange={e=>setBitaNew(p=>({...p,nota:e.target.value}))}
+                        placeholder="Describe el evento, mediciones, acciones tomadas..."
+                        rows={3} style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
+                          border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"8px 10px",borderRadius:2,
+                          width:"100%",resize:"vertical",lineHeight:1.5}}/>
+                    </div>
+                    <button onClick={()=>{
+                      if(!bitaNew.nota.trim()) return;
+                      setBitacora(p=>[{...bitaNew,id:Date.now()},...p]);
+                      setBitaNew({fecha:todayStr(),tipo:"otro",cultivos:"todos",nota:""});
+                      setBitaForm(false);
+                    }} className="serif" style={{fontSize:15,padding:"8px 24px",background:"#2C1810",color:"#F2EBD9",
+                      border:"none",borderRadius:2,cursor:"pointer"}}>
+                      Guardar evento
+                    </button>
+                  </div>
+                )}
+
+                {/* Events list */}
+                {bitacora.length===0?(
+                  <div className="card" style={{padding:"40px 24px",textAlign:"center"}}>
+                    <div className="serif" style={{fontSize:18,color:"#9C7A5A",fontStyle:"italic"}}>
+                      Sin eventos registrados aún.<br/>Agrega el primero con el botón "+".
+                    </div>
+                  </div>
+                ):(
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {(()=>{
+                      const TIPO_META = {
+                        helada:{ico:"❄",c:"#4A7FA5",bg:"rgba(74,127,165,0.08)"},
+                        lluvia:{ico:"🌧",c:"#4A7FA5",bg:"rgba(74,127,165,0.06)"},
+                        floracion:{ico:"🌸",c:"#B8860B",bg:"rgba(184,134,11,0.06)"},
+                        cuaja:{ico:"🫐",c:"#5C3D28",bg:"rgba(92,61,40,0.04)"},
+                        cosecha:{ico:"🧺",c:"#C2622D",bg:"rgba(194,98,45,0.07)"},
+                        poda:{ico:"✂",c:"#5C3D28",bg:"rgba(92,61,40,0.04)"},
+                        fertilizacion:{ico:"🧪",c:"#3D6B35",bg:"rgba(61,107,53,0.06)"},
+                        plaga:{ico:"🐛",c:"#8B0000",bg:"rgba(139,0,0,0.06)"},
+                        riego_extra:{ico:"💧",c:"#4A7FA5",bg:"rgba(74,127,165,0.07)"},
+                        visita:{ico:"👤",c:"#9C7A5A",bg:"rgba(156,122,90,0.06)"},
+                        otro:{ico:"📌",c:"#9C7A5A",bg:"rgba(92,61,40,0.04)"},
+                      };
+                      // Group by month
+                      const byMonth = {};
+                      bitacora.forEach(ev=>{
+                        const mes=ev.fecha.slice(0,7);
+                        if(!byMonth[mes]) byMonth[mes]=[];
+                        byMonth[mes].push(ev);
+                      });
+                      return Object.entries(byMonth).sort(([a],[b])=>b.localeCompare(a)).map(([mes,evs])=>(
+                        <div key={mes}>
+                          <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2,marginBottom:8,marginTop:4}}>
+                            {new Date(mes+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"}).toUpperCase()}
+                          </div>
+                          {evs.sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(ev=>{
+                            const m=TIPO_META[ev.tipo]||TIPO_META.otro;
+                            const cult=ev.cultivos==="todos"?"Todo el predio":CULTIVOS.find(c=>c.id===ev.cultivos)?.label||ev.cultivos;
+                            return(
+                              <div key={ev.id} className="card" style={{padding:"12px 18px",marginBottom:6,
+                                background:m.bg,border:`1px solid ${m.c}22`,display:"flex",gap:14,alignItems:"flex-start"}}>
+                                <div style={{width:32,height:32,borderRadius:"50%",background:m.c+"18",display:"flex",
+                                  alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{m.ico}</div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                                      <span className="serif" style={{fontSize:14,fontWeight:600,color:m.c}}>
+                                        {ev.tipo.charAt(0).toUpperCase()+ev.tipo.slice(1).replace(/_/g," ")}
+                                      </span>
+                                      <span className="mono" style={{fontSize:9,padding:"1px 6px",borderRadius:2,
+                                        background:m.c+"14",color:m.c}}>{cult}</span>
+                                    </div>
+                                    <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                                      <span className="mono" style={{fontSize:10,color:"#9C7A5A"}}>{fmtShort(ev.fecha)}</span>
+                                      <button onClick={()=>setBitacora(p=>p.filter(e=>e.id!==ev.id))}
+                                        style={{background:"transparent",border:"none",color:"rgba(92,61,40,0.3)",
+                                          cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
+                                    </div>
+                                  </div>
+                                  {ev.nota&&<div className="serif" style={{fontSize:13,color:"#5C3D28",marginTop:4,lineHeight:1.5}}>{ev.nota}</div>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ──── REGISTRO REAL (SEMANAL) ──── */}
             {tab==="registro"&&(()=>{
