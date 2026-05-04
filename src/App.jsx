@@ -59,47 +59,6 @@ const TOTAL_HA = CULTIVOS.reduce((a,c)=>a+c.area,0);
 const todayStr  = ()=>new Date().toISOString().split("T")[0];
 const isToday   = d=>d===todayStr();
 const isFuture  = d=>d>todayStr();
-
-// ── Semana ISO ───────────────────────────────────────────────
-const isoWeek = (dateStr) => {
-  const d = new Date(dateStr+"T12:00:00");
-  const jan4 = new Date(d.getFullYear(), 0, 4);
-  const startOfWeek1 = new Date(jan4);
-  startOfWeek1.setDate(jan4.getDate() - (jan4.getDay()||7) + 1);
-  const weekNum = Math.floor((d - startOfWeek1) / (7*864e5)) + 1;
-  return `${d.getFullYear()}-W${String(weekNum).padStart(2,"0")}`;
-};
-const weekDates = (weekKey) => {
-  // Returns {start, end} as YYYY-MM-DD for the ISO week
-  const [yr, wStr] = weekKey.split("-W");
-  const year = parseInt(yr), week = parseInt(wStr);
-  const jan4 = new Date(year, 0, 4);
-  const dow = jan4.getDay()||7;
-  const startOfW1 = new Date(jan4.getTime() - (dow-1)*864e5);
-  const start = new Date(startOfW1.getTime() + (week-1)*7*864e5);
-  const end   = new Date(start.getTime() + 6*864e5);
-  const fmt = d => d.toISOString().split("T")[0];
-  return { start: fmt(start), end: fmt(end) };
-};
-const weekLabel = (weekKey) => {
-  const {start, end} = weekDates(weekKey);
-  const fmtD = d => new Date(d+"T12:00:00").toLocaleDateString("es-CL",{day:"2-digit",month:"short"});
-  return `${fmtD(start)} — ${fmtD(end)}`;
-};
-// Get all ISO weeks covered by wRows
-const getWeeks = (rows) => {
-  const seen = new Set();
-  const weeks = [];
-  for(const r of rows){
-    const wk = isoWeek(r.date);
-    if(!seen.has(wk)){ seen.add(wk); weeks.push(wk); }
-  }
-  return weeks;
-};
-// Sum ETo/precip/etc for all days in a week
-const weekSum = (rows, weekKey, field) =>
-  rows.filter(r=>isoWeek(r.date)===weekKey&&!isFuture(r.date))
-      .reduce((a,r)=>a+(r[field]||0),0);
 const fmtShort  = d=>new Date(d+"T12:00:00").toLocaleDateString("es-CL",{weekday:"short",day:"2-digit",month:"short"});
 const fmtFull   = d=>new Date(d+"T12:00:00").toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
 const hToHM     = h=>{const hh=Math.floor(h),mm=Math.round((h-hh)*60);return mm===0?`${hh}h`:`${hh}h ${mm}m`;};
@@ -145,16 +104,6 @@ tbody tr:hover td{background:rgba(194,98,45,0.025)!important;}
 .fade{animation:fadeUp 0.35s ease forwards;}
 @keyframes drip{0%,100%{transform:translateY(0)}50%{transform:translateY(5px)}}
 .drip{animation:drip 1.6s ease-in-out infinite;display:inline-block;}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
-.pulse{animation:pulse 2s ease-in-out infinite;}
-.no-print{}
-@media print{
-  .no-print{display:none!important;}
-  .print-only{display:block!important;}
-  *{background:white!important;color:black!important;box-shadow:none!important;}
-  .fell,.serif{font-family:Georgia,serif!important;}
-  .mono{font-family:monospace!important;}
-}
 `;
 
 export default function App() {
@@ -168,28 +117,7 @@ export default function App() {
   const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,kcDeFecha(c.id)])));
   const [kcAuto,  setKcAuto]  = useState(true);
 
-  // ── Bitácora de campo ─────────────────────────────────────
-  const BITA_TIPOS = [
-    {k:"helada",   l:"🌡 Helada",         c:"#4A7FA5"},
-    {k:"lluvia",   l:"🌧 Lluvia fuerte",   c:"#4A7FA5"},
-    {k:"viento",   l:"💨 Viento fuerte",   c:"#9C7A5A"},
-    {k:"plaga",    l:"🐛 Plaga / Enfermedad",c:"#8B0000"},
-    {k:"cosecha",  l:"🧺 Cosecha",         c:"#3D6B35"},
-    {k:"poda",     l:"✂ Poda",            c:"#5C3D28"},
-    {k:"ferti",    l:"💧 Fertilización",   c:"#B8860B"},
-    {k:"averia",   l:"⚙ Avería equipo",   c:"#8B0000"},
-    {k:"otro",     l:"📝 Otro",            c:"#9C7A5A"},
-  ];
-  const [bitacora, setBitacora] = useState(()=>{
-    try{ return JSON.parse(localStorage.getItem("hijuelas_bitacora")||"[]"); }
-    catch{ return []; }
-  });
-  const [bitaForm, setBitaForm] = useState(false);
-  const [bitaNew,  setBitaNew]  = useState({fecha:todayStr(),tipo:"otro",cultivos:"todos",nota:""});
-  useEffect(()=>{
-    try{ localStorage.setItem("hijuelas_bitacora",JSON.stringify(bitacora)); }catch(e){}
-  },[bitacora]);
-
+  // ── Datos manuales estación FieldClimate ───────────────────
   // Permite ingresar datos reales de "Nueva Purehue" [0020F829]
   // y recalcular ETo FAO-PM con valores medidos en vez de ERA5
   const [stData, setStData] = useState(() => {
@@ -256,98 +184,37 @@ export default function App() {
   const getHR   = (row) => stData[row.date]?.hr   ? parseFloat(stData[row.date].hr)   : row.hum;
   const getWind = (row) => stData[row.date]?.viento? parseFloat(stData[row.date].viento): row.wind;
   const getPrecip=(row) => stData[row.date]?.lluvia? parseFloat(stData[row.date].lluvia): row.precip;
-  const hasStation=(fecha)=> !!(stData[fecha]?.tmax && stData[fecha]?.tmin);
-
-  // ── Alertas automáticas ───────────────────────────────────
-  const alertas = weather ? (()=>{
-    const alerts = [];
-    const futRows = wRows.filter(r=>isFuture(r.date)).slice(0,3);
-    // Helada: T°mín < 4°C en próximos 3 días
-    const heladaRow = futRows.find(r=>getTmin(r)<4);
-    if(heladaRow) alerts.push({
-      tipo:"helada", nivel:"rojo",
-      msg:`⚠ Riesgo de helada: T°mín ${getTmin(heladaRow).toFixed(1)}°C el ${fmtShort(heladaRow.date)}`,
-      accion:"Activar control de heladas"
-    });
-    // ETo muy alto: >5.5 mm/día hoy o mañana
-    const etoCritico = wRows.find(r=>(isToday(r.date)||isFuture(r.date))&&getEto(r)>5.5);
-    if(etoCritico) alerts.push({
-      tipo:"eto_alto", nivel:"naranja",
-      msg:`☀ ETo elevado: ${getEto(etoCritico).toFixed(2)} mm/día ${isToday(etoCritico.date)?"hoy":fmtShort(etoCritico.date)}`,
-      accion:"Verificar horas de riego"
-    });
-    // Lluvia significativa próximas 48h
-    const lluviaRow = futRows.slice(0,2).find(r=>r.precip>8||(r.precipProb&&r.precipProb>70));
-    if(lluviaRow) alerts.push({
-      tipo:"lluvia", nivel:"azul",
-      msg:`🌧 Lluvia prevista: ${lluviaRow.precip.toFixed(1)}mm ${lluviaRow.precipProb?`(${lluviaRow.precipProb}% prob.)`:""} el ${fmtShort(lluviaRow.date)}`,
-      accion:"Considerar suspender o reducir riego"
-    });
-    // Balance hídrico: déficit acumulado >15% de lo calculado
-    const past = wRows.filter(r=>!isFuture(r.date));
-    const totCalcPast = CULTIVOS.reduce((a,c)=>a+past.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
-    const totRealPast = CULTIVOS.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+Object.entries(regSem).reduce((bb,[wk,v])=>bb+(parseFloat(v[`${c.id}__${t.id}`]?.m3Real||0)||0),0),0),0);
-    const deficPct = totCalcPast>0&&totRealPast>0?((totCalcPast-totRealPast)/totCalcPast*100):null;
-    if(deficPct!==null&&deficPct>15) alerts.push({
-      tipo:"deficit", nivel:"naranja",
-      msg:`💧 Déficit hídrico acumulado: ${deficPct.toFixed(0)}% bajo lo calculado (${(totCalcPast-totRealPast).toFixed(0)} m³)`,
-      accion:"Revisar programa de riego semanal"
-    });
-    return alerts;
-  })() : []; // true = sigue fenología mensual
+  const hasStation=(fecha)=> !!(stData[fecha]?.tmax && stData[fecha]?.tmin); // true = sigue fenología mensual
   const [selDate, setSelDate] = useState(null);
   // ── Gráficos ──────────────────────────────────────────────
   const [chartCult, setChartCult] = useState("todos");
   // ── Registro real ──────────────────────────────────────────
   // registro[date][cultivoId_sectorId] = { m3Real, ec, ph, notas }
-  // ── Registro semanal ──────────────────────────────────────
-  // regSem[weekKey][cultId__sectorId] = {m3Real, ec, ph, notas, fechaInicio, fechaFin}
-  // weekKey = "YYYY-Www" (ISO week)
-  const [regSem, setRegSem] = useState(()=>{
-    try{
-      const legacy = JSON.parse(localStorage.getItem("hijuelas_registro")||"{}");
-      const weekly = JSON.parse(localStorage.getItem("hijuelas_registro_sem")||"{}");
-      // Migrate legacy daily data to weekly on first load
-      if(Object.keys(legacy).length && !Object.keys(weekly).length){
-        const migrated = {};
-        for(const [date, sectors] of Object.entries(legacy)){
-          const wk = isoWeek(date);
-          if(!migrated[wk]) migrated[wk] = {};
-          for(const [key, val] of Object.entries(sectors)){
-            if(!migrated[wk][key]) migrated[wk][key] = {...val};
-            else migrated[wk][key].m3Real = (parseFloat(migrated[wk][key].m3Real||0)+parseFloat(val.m3Real||0)).toFixed(1);
-          }
-        }
-        return migrated;
-      }
-      return weekly;
-    } catch{ return {}; }
+  const [registro, setRegistro] = useState(()=>{
+    try{ return JSON.parse(localStorage.getItem("hijuelas_registro")||"{}"); }
+    catch{ return {}; }
   });
-  const [regWeekSel, setRegWeekSel] = useState(isoWeek(todayStr()));
-  const [regCultId,  setRegCultId]  = useState(CULTIVOS[0].id);
-  const [csvDrag,    setCsvDrag]    = useState(false);
-  const [csvMsg,     setCsvMsg]     = useState(null);
+  const [regFecha,  setRegFecha]  = useState(todayStr());
+  const [regCultId, setRegCultId] = useState(CULTIVOS[0].id);
+  const [csvDrag,   setCsvDrag]   = useState(false);
+  const [csvMsg,    setCsvMsg]    = useState(null);
 
-  // Persist registro semanal
+  // Persist registro
   useEffect(()=>{
-    try{ localStorage.setItem("hijuelas_registro_sem", JSON.stringify(regSem)); }
+    try{ localStorage.setItem("hijuelas_registro", JSON.stringify(registro)); }
     catch(e){ console.warn("localStorage full", e); }
-  },[regSem]);
+  },[registro]);
 
-  const setRegW = (weekKey, cultId, sectorId, campo, valor) => {
+  const setReg = (fecha, cultId, sectorId, campo, valor) => {
     const key = `${cultId}__${sectorId}`;
-    setRegSem(p=>({...p,[weekKey]:{...(p[weekKey]||{}),[key]:{...(p[weekKey]?.[key]||{}),[campo]:valor}}}));
+    setRegistro(p=>{
+      const day = {...(p[fecha]||{})};
+      day[key] = {...(day[key]||{}), [campo]: valor};
+      return {...p, [fecha]: day};
+    });
   };
-  const getRegW = (weekKey, cultId, sectorId, campo) =>
-    regSem?.[weekKey]?.[`${cultId}__${sectorId}`]?.[campo] ?? "";
-
-  // Compatibilidad legacy (para calculos de gráficos que usaban registro diario)
-  const registro = {};
-  const getReg = (fecha, cultId, sectorId, campo) => {
-    const wk = isoWeek(fecha);
-    return getRegW(wk, cultId, sectorId, campo);
-  };
-  const setRegistro = () => {};
+  const getReg = (fecha, cultId, sectorId, campo) =>
+    registro?.[fecha]?.[`${cultId}__${sectorId}`]?.[campo] ?? "";
 
   // ── OlivePlus: mapeo EXACTO sector → cultivo/turno ─────────
   // Fuente: confirmación Nico Valenzuela, abril 2026
@@ -410,20 +277,18 @@ export default function App() {
   ];
 
   // Registra m³ para un sector específico
-  const registrarSector = (newReg, weekKey, cultId, sectorId, m3, ec, ph, notas, fi, ff) => {
+  const registrarSector = (newReg, fecha, cultId, sectorId, m3, ec, ph, notas) => {
     const c = CULTIVOS.find(x=>x.id===cultId);
     if(!c) return;
     const turnos = sectorId ? c.turnos.filter(t=>t.id===sectorId) : c.turnos;
     const haTotal = turnos.reduce((a,t)=>a+t.ha, 0);
     for(const t of turnos){
       const key = `${cultId}__${t.id}`;
-      if(!newReg[weekKey]) newReg[weekKey]={};
-      const prev = parseFloat(newReg[weekKey][key]?.m3Real||0);
-      newReg[weekKey][key] = {
-        m3Real: (prev + m3*(t.ha/haTotal)).toFixed(1),
+      if(!newReg[fecha]) newReg[fecha]={};
+      newReg[fecha][key] = {
+        m3Real: (m3 * (t.ha/haTotal)).toFixed(1),
         ec: ec||"", ph: ph||"",
         notas: notas||"OlivePlus",
-        fechaInicio: fi||"", fechaFin: ff||"",
       };
     }
   };
@@ -447,16 +312,11 @@ export default function App() {
     const iVol    = cols0.findIndex(h=>/^volumen$/i.test(h.trim()));
     if(iNombre<0||iVol<0) return { ok:false, msg:`Columnas: ${cols0.join(", ")}` };
 
-    // Extraer rango de fechas del título (ej: "22/04/2026 - 29/04/2026")
-    let fechaInicio = todayStr(), fechaFin = todayStr();
+    // Extraer fecha final del rango del título (ej: "22/04/2026 - 29/04/2026")
+    let fechaImport = todayStr();
     const titulo = lines.slice(0, hdrIdx).join(" ");
     const mf = titulo.match(/(\d{2}\/\d{2}\/\d{4})\s*[-–]\s*(\d{2}\/\d{2}\/\d{4})/);
-    if(mf){
-      const [d1,mo1,y1]=mf[1].split("/"); fechaInicio=`${y1}-${mo1}-${d1}`;
-      const [d2,mo2,y2]=mf[2].split("/"); fechaFin=`${y2}-${mo2}-${d2}`;
-    }
-    // Usar la semana del día final del reporte
-    const weekKey = isoWeek(fechaFin);
+    if(mf){ const [d,mo,y]=mf[2].split("/"); fechaImport=`${y}-${mo}-${d}`; }
 
     let imported=0;
     const newReg={};
@@ -470,12 +330,14 @@ export default function App() {
       if(isNaN(m3)||m3===0){ sinMatch.push(`${nombre} (m³=0, ignorado)`); continue; }
 
       if(isSectorReport){
+        // Reporte granular por sector — usar OLIVE_SECTOR_MAP
         const rule = OLIVE_SECTOR_MAP.find(r=>r.match.test(nombre));
         if(!rule){ sinMatch.push(nombre); continue; }
-        if(!rule.cultId) continue;
-        registrarSector(newReg, weekKey, rule.cultId, rule.sectorId, m3, "", "", `OlivePlus: ${nombre}`, fechaInicio, fechaFin);
+        if(!rule.cultId) continue; // ignorar (heladas, etc.)
+        registrarSector(newReg, fechaImport, rule.cultId, rule.sectorId, m3, "", "", `OlivePlus: ${nombre}`);
         imported++;
       } else {
+        // Reporte acumulado por equipo — usar OLIVE_EQUIPO_MAP
         const rule = OLIVE_EQUIPO_MAP.find(r=>r.match.test(nombre));
         if(!rule||!rule.ids.length){ sinMatch.push(nombre); continue; }
         for(const {cid, tids} of rule.ids){
@@ -483,16 +345,16 @@ export default function App() {
           if(!c) continue;
           const turnos = tids.map(tid=>c.turnos.find(t=>t.id===tid)).filter(Boolean);
           const haGrupo = turnos.reduce((a,t)=>a+t.ha,0);
+          // Porción proporcional de este cultivo dentro del equipo
           const haEquipo = rule.ids.reduce((a,{cid:cid2,tids:tids2})=>{
             const c2=CULTIVOS.find(x=>x.id===cid2); if(!c2) return a;
             return a+tids2.reduce((b,tid)=>{const t=c2.turnos.find(x=>x.id===tid);return b+(t?t.ha:0);},0);
           },0);
-          const m3Cultivo = m3*(haGrupo/haEquipo);
-          if(!newReg[weekKey]) newReg[weekKey]={};
+          const m3Cultivo = m3 * (haGrupo/haEquipo);
           for(const t of turnos){
             const key=`${cid}__${t.id}`;
-            const prev = parseFloat(newReg[weekKey][key]?.m3Real||0);
-            newReg[weekKey][key]={ m3Real:(prev+m3Cultivo*(t.ha/haGrupo)).toFixed(1), ec:"", ph:"", notas:`OlivePlus: ${nombre}`, fechaInicio, fechaFin };
+            if(!newReg[fechaImport]) newReg[fechaImport]={};
+            newReg[fechaImport][key]={ m3Real:(m3Cultivo*(t.ha/haGrupo)).toFixed(1), ec:"", ph:"", notas:`OlivePlus: ${nombre}` };
           }
           imported++;
         }
@@ -503,15 +365,15 @@ export default function App() {
       const sugerencia = isSectorReport
         ? "Sectores reconocidos: Linea 2 V1+V2, Linea 2 V3-V6, Linea 1 V1-V3, Linea 3 V1-V2"
         : "Equipos reconocidos: Citricos (MELBACE2V4), Naranjos Valencia (MELBACE4V4), Paltos (MELBACE1)";
-      return { ok:false, msg:`No se importó ninguna fila.\n${sugerencia}` };
+      return { ok:false, msg:`No se importó ninguna fila.\nSin coincidencia: ${sinMatch.join(", ")}\n${sugerencia}` };
     }
 
-    setRegSem(p=>{ const m={...p}; for(const[wk,v] of Object.entries(newReg)) m[wk]={...m[wk],...v}; return m; });
-    const rango = mf ? `${mf[1]} al ${mf[2]}` : weekLabel(weekKey);
-    const tipo = isSectorReport?"sectores (detallado)":"equipos (acumulado)";
+    setRegistro(p=>{ const m={...p}; for(const[d,v] of Object.entries(newReg)) m[d]={...m[d],...v}; return m; });
+    const tipo = isSectorReport?"sectores (reporte detallado)":"equipos (reporte acumulado)";
+    const noMatch = sinMatch.filter(s=>!s.includes("m³=0")).length;
     return {
       ok:true,
-      msg:`✅ ${imported} ${tipo} importados\nSemana: ${rango} → ${weekLabel(weekKey)}${sinMatch.filter(s=>!s.includes("m³=0")).length?`\nIgnorados: ${sinMatch.filter(s=>!s.includes("m³=0")).join(", ")}`:""}`
+      msg:`✅ ${imported} ${tipo} importados → fecha ${fechaImport}${noMatch>0?`\nIgnorados sin coincidencia: ${sinMatch.filter(s=>!s.includes("m³=0")).join(", ")}`:""}`
     };
   };
 
@@ -546,7 +408,7 @@ export default function App() {
   const fetchWeather = useCallback(async()=>{
     setLoading(true); setError(null);
     try{
-      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max,precipitation_probability_max&timezone=America%2FSantiago&past_days=7&forecast_days=7`);
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max&timezone=America%2FSantiago&past_days=7&forecast_days=3`);
       if(!r.ok) throw new Error("HTTP "+r.status);
       setWeather((await r.json()).daily);
       setLastUpd(new Date().toLocaleTimeString("es-CL"));
@@ -564,7 +426,6 @@ export default function App() {
     precip:weather.precipitation_sum[i]||0,
     tmax:weather.temperature_2m_max[i], tmin:weather.temperature_2m_min[i],
     wind:weather.wind_speed_10m_max[i], hum:weather.relative_humidity_2m_max[i],
-    precipProb:weather.precipitation_probability_max?.[i]||0,
   })) : [];
 
   const todayRow = wRows.find(r=>isToday(r.date));
@@ -630,27 +491,6 @@ export default function App() {
         )}
       </div>
 
-      {/* ── Alertas automáticas ── */}
-      {alertas.length>0&&(
-        <div style={{background:"#1a0f08",borderBottom:"1px solid rgba(92,61,40,0.4)"}}>
-          {alertas.map((a,i)=>(
-            <div key={i} style={{
-              display:"flex",alignItems:"center",justifyContent:"space-between",
-              padding:"7px 32px",
-              borderBottom:i<alertas.length-1?"1px solid rgba(255,255,255,0.05)":"none",
-              background:a.nivel==="rojo"?"rgba(139,0,0,0.3)":a.nivel==="azul"?"rgba(74,127,165,0.2)":"rgba(184,134,11,0.2)",
-            }}>
-              <span className="mono" style={{fontSize:11,color:a.nivel==="rojo"?"#F7C1C1":a.nivel==="azul"?"#B5D4F4":"#FAC775"}}>
-                {a.msg}
-              </span>
-              <span className="serif" style={{fontSize:11,color:"rgba(242,235,217,0.45)",fontStyle:"italic",marginLeft:16,whiteSpace:"nowrap"}}>
-                → {a.accion}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* ═══════════════ NAV BAR ═══════════════ */}
       <div style={{background:"rgba(232,220,191,0.6)",borderBottom:"1px solid rgba(92,61,40,0.28)",padding:"0 32px",display:"flex",alignItems:"center",gap:24,flexWrap:"wrap",backdropFilter:"blur(4px)"}}>
         <div style={{display:"flex",gap:8}}>
@@ -660,7 +500,7 @@ export default function App() {
           ))}
         </div>
         <div style={{width:1,height:26,background:"rgba(92,61,40,0.25)"}}/>
-        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["balance","💧 Balance"],["graficos","📈 Gráficos"],["bitacora","📓 Bitácora"],["registro","📋 Registro"],["planos","📐 Planos"]].map(([k,l])=>(
+        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["graficos","📈 Gráficos"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
           <button key={k} className={`tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -1024,14 +864,7 @@ export default function App() {
             {/* ──── PROGRAMA DEL DÍA ──── */}
             {tab==="hoy"&&todayRow&&(
               <div className="fade">
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,flexWrap:"wrap",gap:10}}>
-                  <h2 className="fell" style={{fontSize:24,fontWeight:400}}>Programa de Riego</h2>
-                  <button onClick={()=>window.print()} className="serif no-print"
-                    style={{fontSize:14,padding:"6px 16px",border:"1px solid rgba(92,61,40,0.35)",borderRadius:2,
-                      background:"transparent",color:"#2C1810",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
-                    🖨 Imprimir programa
-                  </button>
-                </div>
+                <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Programa de Riego</h2>
                 <div className="serif" style={{fontSize:16,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{fmtFull(todayStr())} · ETo {getEto(todayRow).toFixed(2)} mm/día</div>
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {visibles.map(c=>{
@@ -1200,218 +1033,6 @@ export default function App() {
                 })()}
               </div>
             )}
-
-            {/* ──── BALANCE HÍDRICO ──── */}
-            {tab==="balance"&&(()=>{
-              const allWeeks = getWeeks(wRows);
-              const cultF = visibles;
-              // Acumulado por semana
-              let cumCalc=0, cumReal=0;
-              const weekData = allWeeks.map(wk=>{
-                const days=wRows.filter(r=>isoWeek(r.date)===wk&&!isFuture(r.date));
-                const eto_=days.reduce((a,r)=>a+getEto(r),0);
-                const calc_=cultF.reduce((a,c)=>a+days.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
-                const real_=cultF.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+(parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0),0),0);
-                const precip_=days.reduce((a,r)=>a+getPrecip(r),0);
-                cumCalc+=calc_; if(real_>0) cumReal+=real_;
-                const deficit=cumCalc-cumReal;
-                return{wk,eto:eto_,calc:calc_,real:real_,precip:precip_,cumCalc,cumReal,deficit,hasReal:real_>0};
-              });
-              const lastW=weekData[weekData.length-1];
-              const deficitActual=lastW?.deficit||0;
-              const eficTotal=lastW?.cumCalc>0&&lastW?.cumReal>0?(lastW.cumReal/lastW.cumCalc*100):null;
-              const diasSinLluvia=wRows.filter(r=>!isFuture(r.date)&&getPrecip(r)<1).length;
-              const etoSemana=wRows.filter(r=>isoWeek(r.date)===isoWeek(todayStr())&&!isFuture(r.date)).reduce((a,r)=>a+getEto(r),0);
-
-              // SVG balance chart
-              const W=860, H=260, PL=62, PR=20, PT=28, PB=50;
-              const IW=W-PL-PR, IH=H-PT-PB;
-              const wks=weekData.filter(w=>w.calc>0);
-              const maxVol=Math.max(...wks.map(w=>Math.max(w.calc,w.real)),100)*1.15;
-              const barW_=Math.min(32,IW/Math.max(wks.length*2,1)*0.8);
-
-              return(
-                <div className="fade">
-                  <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Balance Hídrico del Predio</h2>
-                  <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic",marginBottom:20}}>
-                    Seguimiento del déficit o exceso de agua acumulado por semana · Temporada {new Date().getFullYear()}
-                  </div>
-
-                  {/* KPI cards */}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:24}}>
-                    {[
-                      {l:"ETo semana actual",v:etoSemana.toFixed(1)+" mm",c:"#C2622D",ico:"☀"},
-                      {l:"Déficit acumulado",v:`${deficitActual>0?"+":""}${deficitActual.toFixed(0)} m³`,
-                        c:deficitActual>500?"#8B0000":deficitActual>200?"#B8860B":"#3D6B35",ico:"💧"},
-                      {l:"Eficiencia temporada",v:eficTotal?eficTotal.toFixed(0)+"%":"—",
-                        c:eficTotal>=85?"#3D6B35":eficTotal>=70?"#B8860B":"#8B0000",ico:"⚙"},
-                      {l:"Días sin lluvia",v:diasSinLluvia+" días",c:diasSinLluvia>20?"#8B0000":diasSinLluvia>10?"#B8860B":"#3D6B35",ico:"🌤"},
-                      {l:"m³ calculados total",v:lastW?.cumCalc.toFixed(0)||"—",c:"#B8860B",ico:"📐"},
-                      {l:"m³ reales total",v:lastW?.cumReal>0?lastW.cumReal.toFixed(0):"—",c:"#3D6B35",ico:"✓"},
-                    ].map(s=>(
-                      <div key={s.l} className="card" style={{padding:"12px 16px"}}>
-                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4,letterSpacing:0.5}}>{s.ico} {s.l.toUpperCase()}</div>
-                        <div className="serif" style={{fontSize:22,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Weekly volume chart */}
-                  <div className="card" style={{padding:"0 0 12px",marginBottom:20,overflow:"hidden"}}>
-                    <div style={{padding:"14px 20px 10px",borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
-                      <div className="fell" style={{fontSize:18,fontWeight:400}}>Riego semanal — Calculado vs Real</div>
-                      <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>BARRAS NARANJAS = calculado FAO-PM · BARRAS VERDES = real aplicado · Diferencia = déficit (-) o exceso (+)</div>
-                    </div>
-                    <div style={{overflowX:"auto",padding:"8px 0 0"}}>
-                      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{display:"block"}}>
-                        {/* Grid */}
-                        {[0,0.25,0.5,0.75,1].map(f=>{
-                          const y=PT+IH*(1-f);
-                          const v=Math.round(maxVol*f);
-                          return(<g key={f}>
-                            <line x1={PL} x2={W-PR} y1={y} y2={y} stroke="rgba(92,61,40,0.1)" strokeDasharray="4,4"/>
-                            <text x={PL-4} y={y+4} textAnchor="end" fontSize={9} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{v}</text>
-                          </g>);
-                        })}
-                        <line x1={PL} x2={PL} y1={PT} y2={H-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
-                        <line x1={PL} x2={W-PR} y1={H-PB} y2={H-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
-                        {wks.map((w,i)=>{
-                          const x=PL+i*(IW/wks.length)+(IW/wks.length)*0.1;
-                          const bw=Math.min(30,IW/wks.length*0.35);
-                          const hCalc=(w.calc/maxVol)*IH, hReal=(w.hasReal?(w.real/maxVol)*IH:0);
-                          const isCurr=w.wk===isoWeek(todayStr());
-                          const pct=w.hasReal&&w.calc>0?(w.real/w.calc*100):null;
-                          const {start,end}=weekDates(w.wk);
-                          const lbl=new Date(end+"T12:00:00").toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit"});
-                          return(<g key={w.wk}>
-                            {isCurr&&<rect x={PL+i*(IW/wks.length)} width={IW/wks.length} y={PT} height={IH} fill="rgba(184,134,11,0.04)"/>}
-                            <rect x={x} y={H-PB-hCalc} width={bw} height={hCalc} fill={isCurr?"#B8860B":"rgba(184,134,11,0.35)"} rx={2} stroke="#B8860B" strokeWidth={0.5}/>
-                            {w.hasReal&&<rect x={x+bw+2} y={H-PB-hReal} width={bw} height={hReal}
-                              fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} rx={2} opacity={0.9}/>}
-                            {pct!=null&&<text x={x+bw+2+bw/2} y={H-PB-hReal-5} textAnchor="middle" fontSize={8}
-                              fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} fontFamily="'DM Mono',monospace" fontWeight="600">{pct.toFixed(0)}%</text>}
-                            <text x={x+bw} y={H-PB+14} textAnchor="middle" fontSize={8.5} fill={isCurr?"#C2622D":"#9C7A5A"} fontFamily="'DM Mono',monospace">{lbl}</text>
-                          </g>);
-                        })}
-                        <g transform={`translate(${PL},${PT-10})`}>
-                          <rect x={0} y={0} width={10} height={8} fill="rgba(184,134,11,0.5)" stroke="#B8860B" strokeWidth={0.5} rx={1}/>
-                          <text x={14} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Calculado (m³)</text>
-                          <rect x={110} y={0} width={10} height={8} fill="#3D6B35" rx={1}/>
-                          <text x={124} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Real OlivePlus (m³)</text>
-                          <text x={260} y={8} fontSize={8.5} fill="#9C7A5A" fontFamily="'DM Mono',monospace">% = eficiencia semana</text>
-                        </g>
-                      </svg>
-                    </div>
-                  </div>
-
-                  {/* Cumulative deficit chart */}
-                  {weekData.some(w=>w.hasReal)&&(()=>{
-                    const H2=200, wHas=weekData.filter(w=>w.calc>0);
-                    const maxAcum=Math.max(...wHas.map(w=>Math.max(w.cumCalc,w.cumReal)),100)*1.1;
-                    const linePath=(pts,getY)=>pts.map((w,i)=>{
-                      const x=PL+i*(IW/(pts.length-1));
-                      const y=PT+(H2-PT-PB)*(1-getY(w)/maxAcum);
-                      return`${i===0?"M":"L"}${x},${y}`;
-                    }).join(" ");
-                    return(
-                      <div className="card" style={{padding:"0 0 12px",overflow:"hidden"}}>
-                        <div style={{padding:"14px 20px 10px",borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
-                          <div className="fell" style={{fontSize:18,fontWeight:400}}>Balance Acumulado de Temporada</div>
-                          <div className="mono" style={{fontSize:9,color:"#9C7A5A",marginTop:2}}>
-                            ÁREA NARANJA = calculado acumulado · LÍNEA VERDE = real aplicado · BRECHA = déficit acumulado
-                          </div>
-                        </div>
-                        <div style={{overflowX:"auto",padding:"8px 0 0"}}>
-                          <svg width="100%" viewBox={`0 0 ${W} ${H2}`} preserveAspectRatio="xMidYMid meet" style={{display:"block"}}>
-                            {[0,0.5,1].map(f=>{
-                              const y=PT+(H2-PT-PB)*(1-f);
-                              return(<g key={f}>
-                                <line x1={PL} x2={W-PR} y1={y} y2={y} stroke="rgba(92,61,40,0.1)" strokeDasharray="4,4"/>
-                                <text x={PL-4} y={y+4} textAnchor="end" fontSize={9} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{Math.round(maxAcum*f)}</text>
-                              </g>);
-                            })}
-                            <line x1={PL} x2={PL} y1={PT} y2={H2-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
-                            <line x1={PL} x2={W-PR} y1={H2-PB} y2={H2-PB} stroke="rgba(92,61,40,0.2)" strokeWidth={1}/>
-                            {wHas.length>1&&<>
-                              <path d={`${linePath(wHas,w=>w.cumCalc)} L${PL+IW},${H2-PB} L${PL},${H2-PB} Z`}
-                                fill="rgba(184,134,11,0.18)" stroke="#B8860B" strokeWidth={2}/>
-                              <path d={`${linePath(wHas,w=>w.cumReal)}`}
-                                fill="none" stroke="#3D6B35" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"/>
-                              {wHas.map((w,i)=>{
-                                const x=PL+i*(IW/(wHas.length-1));
-                                const y=PT+(H2-PT-PB)*(1-w.cumReal/maxAcum);
-                                return<circle key={w.wk} cx={x} cy={y} r={4} fill={w.hasReal?"#3D6B35":"transparent"} stroke="#3D6B35" strokeWidth={1.5}/>;
-                              })}
-                              {/* Deficit label at end */}
-                              {(()=>{
-                                const last=wHas[wHas.length-1];
-                                const yC=PT+(H2-PT-PB)*(1-last.cumCalc/maxAcum);
-                                const yR=PT+(H2-PT-PB)*(1-last.cumReal/maxAcum);
-                                return(<g>
-                                  <text x={W-PR-4} y={yC-6} textAnchor="end" fontSize={9} fill="#B8860B" fontFamily="'DM Mono',monospace" fontWeight="600">{last.cumCalc.toFixed(0)} m³ calc.</text>
-                                  {last.cumReal>0&&<>
-                                    <text x={W-PR-4} y={yR+14} textAnchor="end" fontSize={9} fill="#3D6B35" fontFamily="'DM Mono',monospace" fontWeight="600">{last.cumReal.toFixed(0)} m³ real</text>
-                                    <text x={W-PR-4} y={(yC+yR)/2+4} textAnchor="end" fontSize={9} fill={last.deficit>200?"#8B0000":"#9C7A5A"} fontFamily="'DM Mono',monospace">
-                                      {last.deficit>0?"Déficit":"Exceso"}: {Math.abs(last.deficit).toFixed(0)} m³
-                                    </text>
-                                  </>}
-                                </g>);
-                              })()}
-                            </>}
-                            {wHas.map((w,i)=>{
-                              const x=PL+i*(IW/(wHas.length-1));
-                              const {end}=weekDates(w.wk);
-                              return<text key={w.wk} x={x} y={H2-PB+14} textAnchor="middle" fontSize={8.5} fill="#9C7A5A" fontFamily="'DM Mono',monospace">
-                                {new Date(end+"T12:00:00").toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit"})}
-                              </text>;
-                            })}
-                          </svg>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Por cultivo */}
-                  <div style={{marginTop:20}}>
-                    <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2.5,marginBottom:12}}>BALANCE POR CULTIVO · ACUMULADO TEMPORADA</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
-                      {cultF.map(c=>{
-                        const allD=wRows.filter(r=>!isFuture(r.date));
-                        const calcT=allD.reduce((a,r)=>a+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((b,t)=>b+t.volTotal,0),0);
-                        const realT=Object.entries(regSem).reduce((a,[wk,v])=>
-                          a+c.turnos.reduce((b,t)=>b+(parseFloat(v[`${c.id}__${t.id}`]?.m3Real||0)||0),0),0);
-                        const pct=calcT>0&&realT>0?(realT/calcT*100):null;
-                        const def=calcT-realT;
-                        const barPct=pct?Math.min(pct,150):0;
-                        return(
-                          <div key={c.id} className="card" style={{padding:"14px 16px",borderLeft:`3px solid ${c.color}`}}>
-                            <div className="fell" style={{fontSize:15,color:"#2C1810",marginBottom:8}}>{c.emoji} {c.label}</div>
-                            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                              <div><div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>CALCULADO</div>
-                                <span className="serif" style={{fontWeight:700,fontSize:18,color:"#B8860B"}}>{calcT.toFixed(0)} m³</span></div>
-                              {realT>0&&<div style={{textAlign:"right"}}><div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>REAL</div>
-                                <span className="serif" style={{fontWeight:700,fontSize:18,color:"#3D6B35"}}>{realT.toFixed(0)} m³</span></div>}
-                            </div>
-                            {/* Progress bar */}
-                            <div style={{height:6,background:"rgba(92,61,40,0.1)",borderRadius:3,marginBottom:6,overflow:"hidden"}}>
-                              <div style={{height:"100%",width:`${Math.min(barPct,100)}%`,background:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000",borderRadius:3,transition:"width 0.5s"}}/>
-                            </div>
-                            <div style={{display:"flex",justifyContent:"space-between"}}>
-                              <span className="mono" style={{fontSize:9,color:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}}>
-                                {pct?pct.toFixed(0)+"%":"Sin datos reales"}
-                              </span>
-                              {realT>0&&<span className="mono" style={{fontSize:9,color:def>0?"#8B0000":"#3D6B35"}}>
-                                {def>0?"▼":""}{def<0?"▲":""} {Math.abs(def).toFixed(0)} m³ {def>0?"déficit":"exceso"}
-                              </span>}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* ──── GRÁFICOS ──── */}
             {tab==="graficos"&&(()=>{
@@ -1792,506 +1413,300 @@ export default function App() {
               );
             })()}
 
-            {/* ──── BITÁCORA DE CAMPO ──── */}
-            {tab==="bitacora"&&(
+            {/* ──── REGISTRO REAL ──── */}
+            {tab==="registro"&&(
               <div className="fade">
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6,flexWrap:"wrap",gap:12}}>
                   <div>
-                    <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:2}}>Bitácora de Campo</h2>
-                    <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic"}}>
-                      Registro de eventos del predio · Heladas · Plagas · Cosecha · Floraciones · Aplicaciones
-                    </div>
+                    <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:2}}>Registro de Riego Real</h2>
+                    <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic"}}>Ingreso manual o importación desde OlivePlus · Comparación con riego calculado</div>
                   </div>
-                  <button onClick={()=>setBitaForm(p=>!p)} className="serif"
-                    style={{fontSize:15,padding:"7px 18px",border:"1px solid rgba(92,61,40,0.35)",borderRadius:2,
-                      background:bitaForm?"#2C1810":"transparent",color:bitaForm?"#F2EBD9":"#2C1810",cursor:"pointer"}}>
-                    {bitaForm?"✕ Cancelar":"+ Nuevo evento"}
+                  <button onClick={()=>{if(window.confirm("¿Borrar todo el registro? Esta acción no se puede deshacer.")){setRegistro({});setCsvMsg(null);}}}
+                    style={{fontFamily:"'DM Mono',monospace",fontSize:10,background:"transparent",border:"1px solid rgba(139,0,0,0.3)",color:"#8B0000",padding:"5px 12px",borderRadius:2,cursor:"pointer"}}>
+                    🗑 Borrar todo
                   </button>
                 </div>
 
-                {/* Form */}
-                {bitaForm&&(
-                  <div className="card" style={{padding:"18px 22px",marginBottom:20,border:"1px solid rgba(92,61,40,0.25)"}}>
-                    <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:14}}>NUEVO EVENTO</div>
-                    <div style={{display:"grid",gridTemplateColumns:"160px 180px 1fr",gap:12,marginBottom:12}}>
-                      <div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1.6fr",gap:20,marginTop:16}}>
+
+                  {/* ── LEFT: Entrada manual + Import CSV ── */}
+                  <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+                    {/* Import CSV */}
+                    <div className="card" style={{padding:"18px 20px"}}>
+                      <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>IMPORTAR DESDE OLIVEPLUS</div>
+                      <div
+                        onDragOver={e=>{e.preventDefault();setCsvDrag(true);}}
+                        onDragLeave={()=>setCsvDrag(false)}
+                        onDrop={e=>{e.preventDefault();setCsvDrag(false);const f=e.dataTransfer.files[0];if(f)handleCSVFile(f);}}
+                        style={{border:`2px dashed ${csvDrag?"#4A7FA5":"rgba(92,61,40,0.25)"}`,borderRadius:4,padding:"20px 16px",textAlign:"center",background:csvDrag?"rgba(74,127,165,0.06)":"rgba(232,220,191,0.2)",transition:"all 0.15s",cursor:"pointer"}}
+                        onClick={()=>document.getElementById("csv-input").click()}>
+                        <div style={{fontSize:28,marginBottom:8}}>📂</div>
+                        <div className="serif" style={{fontSize:15,color:"#5C3D28",marginBottom:4}}>Arrastra el archivo Excel de OlivePlus aquí</div>
+                        <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>o haz clic para seleccionar · Acepta .xlsx exportado desde OlivePlus · "Riego acumulado por equipo"</div>
+                        <input id="csv-input" type="file" accept=".csv,.tsv,.txt,.xlsx" style={{display:"none"}}
+                          onChange={e=>handleCSVFile(e.target.files[0])}/>
+                      </div>
+                      {csvMsg&&(
+                        <div className="mono" style={{marginTop:10,fontSize:10,padding:"8px 12px",borderRadius:3,
+                          background:csvMsg.startsWith("✅")?"rgba(61,107,53,0.08)":"rgba(139,0,0,0.06)",
+                          color:csvMsg.startsWith("✅")?"#3D6B35":"#8B0000",
+                          border:`1px solid ${csvMsg.startsWith("✅")?"rgba(61,107,53,0.25)":"rgba(139,0,0,0.2)"}`,
+                          whiteSpace:"pre-line",lineHeight:1.6}}>
+                          {csvMsg}
+                        </div>
+                      )}
+                      <div className="mono" style={{marginTop:10,fontSize:8,color:"#9C7A5A",lineHeight:1.9}}>
+                        <span style={{color:"#3D6B35",fontWeight:500}}>✓ Equipos reconocidos automáticamente:</span><br/>
+                        <span style={{color:"#5C3D28"}}>Citricos (MELBACE2V4)</span> → Naranjos Lanelate<br/>
+                        <span style={{color:"#5C3D28"}}>Naranjos Valencia (MELBACE4V4)</span> → Valencia/Midnight<br/>
+                        <span style={{color:"#5C3D28"}}>Paltos (MELBACE1)</span> → Paltos Viejos + Nuevos 1+2 + Nuevos 3<br/>
+                        <span style={{color:"#9C7A5A"}}>Control Heladas paltos viejos</span> → ignorado (solo monitoreo)<br/><br/>
+                        El volumen se distribuye proporcionalmente entre sectores según hectáreas.
+                      </div>
+                    </div>
+
+                    {/* Manual entry */}
+                    <div className="card" style={{padding:"18px 20px"}}>
+                      <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:12}}>INGRESO MANUAL</div>
+                      <div style={{marginBottom:10}}>
                         <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>FECHA</div>
-                        <input type="date" value={bitaNew.fecha}
-                          onChange={e=>setBitaNew(p=>({...p,fecha:e.target.value}))}
-                          style={{fontFamily:"'DM Mono',monospace",fontSize:12,background:"rgba(44,24,16,0.04)",
-                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 8px",borderRadius:2,width:"100%"}}/>
+                        <input type="date" value={regFecha} onChange={e=>setRegFecha(e.target.value)}
+                          style={{fontFamily:"'DM Mono',monospace",fontSize:12,background:"rgba(44,24,16,0.04)",border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 10px",borderRadius:2,width:"100%"}}/>
                       </div>
-                      <div>
-                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>TIPO DE EVENTO</div>
-                        <select value={bitaNew.tipo} onChange={e=>setBitaNew(p=>({...p,tipo:e.target.value}))}
-                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
-                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}>
-                          {[["helada","❄ Helada"],["lluvia","🌧 Lluvia fuerte"],["floracion","🌸 Floración"],
-                            ["cuaja","🫐 Cuaja"],["cosecha","🧺 Cosecha"],["poda","✂ Poda"],
-                            ["fertilizacion","🧪 Fertilización"],["plaga","🐛 Plaga/Enfermedad"],
-                            ["riego_extra","💧 Riego extraordinario"],["visita","👤 Visita técnica"],["otro","📌 Otro"]].map(([v,l])=>(
-                            <option key={v} value={v}>{l}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>CULTIVO AFECTADO</div>
-                        <select value={bitaNew.cultivos} onChange={e=>setBitaNew(p=>({...p,cultivos:e.target.value}))}
-                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
-                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}>
-                          <option value="todos">Todo el predio</option>
+                      <div style={{marginBottom:14}}>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>CULTIVO</div>
+                        <select value={regCultId} onChange={e=>setRegCultId(e.target.value)}
+                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 10px",borderRadius:2,width:"100%"}}>
                           {CULTIVOS.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
                         </select>
                       </div>
-                    </div>
-                    <div style={{marginBottom:12}}>
-                      <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>DESCRIPCIÓN / OBSERVACIÓN</div>
-                      <textarea value={bitaNew.nota} onChange={e=>setBitaNew(p=>({...p,nota:e.target.value}))}
-                        placeholder="Describe el evento, mediciones, acciones tomadas..."
-                        rows={3} style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
-                          border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"8px 10px",borderRadius:2,
-                          width:"100%",resize:"vertical",lineHeight:1.5}}/>
-                    </div>
-                    <button onClick={()=>{
-                      if(!bitaNew.nota.trim()) return;
-                      setBitacora(p=>[{...bitaNew,id:Date.now()},...p]);
-                      setBitaNew({fecha:todayStr(),tipo:"otro",cultivos:"todos",nota:""});
-                      setBitaForm(false);
-                    }} className="serif" style={{fontSize:15,padding:"8px 24px",background:"#2C1810",color:"#F2EBD9",
-                      border:"none",borderRadius:2,cursor:"pointer"}}>
-                      Guardar evento
-                    </button>
-                  </div>
-                )}
-
-                {/* Events list */}
-                {bitacora.length===0?(
-                  <div className="card" style={{padding:"40px 24px",textAlign:"center"}}>
-                    <div className="serif" style={{fontSize:18,color:"#9C7A5A",fontStyle:"italic"}}>
-                      Sin eventos registrados aún.<br/>Agrega el primero con el botón "+".
-                    </div>
-                  </div>
-                ):(
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    {(()=>{
-                      const TIPO_META = {
-                        helada:{ico:"❄",c:"#4A7FA5",bg:"rgba(74,127,165,0.08)"},
-                        lluvia:{ico:"🌧",c:"#4A7FA5",bg:"rgba(74,127,165,0.06)"},
-                        floracion:{ico:"🌸",c:"#B8860B",bg:"rgba(184,134,11,0.06)"},
-                        cuaja:{ico:"🫐",c:"#5C3D28",bg:"rgba(92,61,40,0.04)"},
-                        cosecha:{ico:"🧺",c:"#C2622D",bg:"rgba(194,98,45,0.07)"},
-                        poda:{ico:"✂",c:"#5C3D28",bg:"rgba(92,61,40,0.04)"},
-                        fertilizacion:{ico:"🧪",c:"#3D6B35",bg:"rgba(61,107,53,0.06)"},
-                        plaga:{ico:"🐛",c:"#8B0000",bg:"rgba(139,0,0,0.06)"},
-                        riego_extra:{ico:"💧",c:"#4A7FA5",bg:"rgba(74,127,165,0.07)"},
-                        visita:{ico:"👤",c:"#9C7A5A",bg:"rgba(156,122,90,0.06)"},
-                        otro:{ico:"📌",c:"#9C7A5A",bg:"rgba(92,61,40,0.04)"},
-                      };
-                      // Group by month
-                      const byMonth = {};
-                      bitacora.forEach(ev=>{
-                        const mes=ev.fecha.slice(0,7);
-                        if(!byMonth[mes]) byMonth[mes]=[];
-                        byMonth[mes].push(ev);
-                      });
-                      return Object.entries(byMonth).sort(([a],[b])=>b.localeCompare(a)).map(([mes,evs])=>(
-                        <div key={mes}>
-                          <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2,marginBottom:8,marginTop:4}}>
-                            {new Date(mes+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"}).toUpperCase()}
-                          </div>
-                          {evs.sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(ev=>{
-                            const m=TIPO_META[ev.tipo]||TIPO_META.otro;
-                            const cult=ev.cultivos==="todos"?"Todo el predio":CULTIVOS.find(c=>c.id===ev.cultivos)?.label||ev.cultivos;
-                            return(
-                              <div key={ev.id} className="card" style={{padding:"12px 18px",marginBottom:6,
-                                background:m.bg,border:`1px solid ${m.c}22`,display:"flex",gap:14,alignItems:"flex-start"}}>
-                                <div style={{width:32,height:32,borderRadius:"50%",background:m.c+"18",display:"flex",
-                                  alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{m.ico}</div>
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
-                                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                                      <span className="serif" style={{fontSize:14,fontWeight:600,color:m.c}}>
-                                        {ev.tipo.charAt(0).toUpperCase()+ev.tipo.slice(1).replace(/_/g," ")}
-                                      </span>
-                                      <span className="mono" style={{fontSize:9,padding:"1px 6px",borderRadius:2,
-                                        background:m.c+"14",color:m.c}}>{cult}</span>
-                                    </div>
-                                    <div style={{display:"flex",gap:12,alignItems:"center"}}>
-                                      <span className="mono" style={{fontSize:10,color:"#9C7A5A"}}>{fmtShort(ev.fecha)}</span>
-                                      <button onClick={()=>setBitacora(p=>p.filter(e=>e.id!==ev.id))}
-                                        style={{background:"transparent",border:"none",color:"rgba(92,61,40,0.3)",
-                                          cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
-                                    </div>
-                                  </div>
-                                  {ev.nota&&<div className="serif" style={{fontSize:13,color:"#5C3D28",marginTop:4,lineHeight:1.5}}>{ev.nota}</div>}
+                      {(()=>{
+                        const c = CULTIVOS.find(x=>x.id===regCultId);
+                        const kc = kcAuto?kcDeFecha(c.id,regFecha):kcs[c.id];
+                        const dayRow = wRows.find(r=>r.date===regFecha);
+                        const tRcalc = dayRow ? calcAuto(c,kcs,kcAuto,dayRow.eto,dayRow.precip,regFecha) : null;
+                        return c.turnos.map(t=>{
+                          const calcVol = tRcalc?.find(x=>x.id===t.id)?.volTotal;
+                          const realVal = getReg(regFecha,c.id,t.id,"m3Real");
+                          const diff = realVal!==""&&calcVol!=null ? (parseFloat(realVal)-calcVol) : null;
+                          return(
+                            <div key={t.id} style={{marginBottom:12,paddingBottom:12,borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                                <div>
+                                  <span className="serif" style={{fontSize:14,fontWeight:600,color:c.color}}>{t.label}</span>
+                                  {calcVol!=null&&<span className="mono" style={{fontSize:9,color:"#9C7A5A",marginLeft:8}}>calc. {calcVol.toFixed(0)} m³</span>}
+                                </div>
+                                {diff!=null&&<span className="mono" style={{fontSize:10,color:diff<-10?"#8B0000":diff>10?"#3D6B35":"#9C7A5A",fontWeight:500}}>
+                                  {diff>0?"+":""}{diff.toFixed(0)} m³
+                                </span>}
+                              </div>
+                              <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px",gap:6}}>
+                                <div>
+                                  <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>M³ APLICADOS REAL</div>
+                                  <input type="number" step="1" min="0" placeholder="0"
+                                    value={realVal}
+                                    onChange={e=>setReg(regFecha,c.id,t.id,"m3Real",e.target.value)}
+                                    style={{fontFamily:"'DM Mono',monospace",fontSize:13,background:"rgba(44,24,16,0.04)",border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}/>
+                                </div>
+                                <div>
+                                  <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>EC (dS/m)</div>
+                                  <input type="number" step="0.1" min="0" placeholder="—"
+                                    value={getReg(regFecha,c.id,t.id,"ec")}
+                                    onChange={e=>setReg(regFecha,c.id,t.id,"ec",e.target.value)}
+                                    style={{fontFamily:"'DM Mono',monospace",fontSize:13,background:"rgba(44,24,16,0.04)",border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}/>
+                                </div>
+                                <div>
+                                  <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>pH</div>
+                                  <input type="number" step="0.1" min="4" max="9" placeholder="—"
+                                    value={getReg(regFecha,c.id,t.id,"ph")}
+                                    onChange={e=>setReg(regFecha,c.id,t.id,"ph",e.target.value)}
+                                    style={{fontFamily:"'DM Mono',monospace",fontSize:13,background:"rgba(44,24,16,0.04)",border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}/>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ──── REGISTRO REAL (SEMANAL) ──── */}
-            {tab==="registro"&&(()=>{
-              const allWeeks = getWeeks(wRows.filter(r=>!isFuture(r.date)));
-              const cultF = visibles;
-
-              // Calcular totales semanales calculados
-              const weekCalc = (wk, cultivos) => {
-                const days = wRows.filter(r=>isoWeek(r.date)===wk&&!isFuture(r.date));
-                return cultivos.reduce((a,c)=>
-                  a+days.reduce((b,r)=>
-                    b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0)
-                  ,0)
-                ,0);
-              };
-              const weekReal = (wk, cultivos) =>
-                cultivos.reduce((a,c)=>
-                  a+c.turnos.reduce((b,t)=>
-                    b+(parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0)
-                  ,0)
-                ,0);
-              const weekETo = (wk) => weekSum(wRows, wk, "eto");
-              const weekPrecip = (wk) => weekSum(wRows, wk, "precip");
-
-              // Acumulados globales
-              let totCalc=0,totReal=0;
-              allWeeks.forEach(wk=>{
-                const c=weekCalc(wk,cultF), r=weekReal(wk,cultF);
-                totCalc+=c; if(r>0) totReal+=r;
-              });
-              const eficGlobal = totCalc>0?(totReal/totCalc*100):null;
-              const hasAnyReal = allWeeks.some(wk=>weekReal(wk,cultF)>0);
-
-              return(
-                <div className="fade">
-                  {/* Header */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
-                    <div>
-                      <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:2}}>Registro de Riego Semanal</h2>
-                      <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic"}}>
-                        Acumulado semanal · Calculado FAO vs Real OlivePlus · El riego puede distribuirse cualquier día de la semana
-                      </div>
+                              <div style={{marginTop:5}}>
+                                <input type="text" placeholder="Notas (fertilizante, incidencia...)"
+                                  value={getReg(regFecha,c.id,t.id,"notas")}
+                                  onChange={e=>setReg(regFecha,c.id,t.id,"notas",e.target.value)}
+                                  style={{fontFamily:"'Cormorant Garamond',serif",fontSize:12,background:"rgba(44,24,16,0.04)",border:"1px solid rgba(92,61,40,0.08)",color:"#5C3D28",padding:"4px 8px",borderRadius:2,width:"100%"}}/>
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                      <div className="serif" style={{fontSize:12,color:"#9C7A5A",fontStyle:"italic",marginTop:4}}>Los datos se guardan automáticamente al escribir.</div>
                     </div>
-                    <button onClick={()=>{if(window.confirm("¿Borrar todo el registro semanal?"))setRegSem({});}}
-                      style={{fontFamily:"'DM Mono',monospace",fontSize:10,background:"transparent",border:"1px solid rgba(139,0,0,0.3)",color:"#8B0000",padding:"5px 12px",borderRadius:2,cursor:"pointer"}}>
-                      🗑 Borrar todo
-                    </button>
                   </div>
 
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1.6fr",gap:20}}>
+                  {/* ── RIGHT: Comparison table ── */}
+                  <div>
+                    <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>COMPARATIVO CALCULADO VS REAL · POR DÍA</div>
+                    {(()=>{
+                      const dias = wRows.filter(r=>!isFuture(r.date));
+                      const cultFilt = visibles;
+                      // Summary stats
+                      let totCalc=0,totReal=0,diasConDatos=0;
+                      const rows = dias.map(row=>{
+                        const dayCalc = cultFilt.reduce((a,c)=>{
+                          const tR=calcAuto(c,kcs,kcAuto,row.eto,row.precip,row.date);
+                          return a+tR.reduce((b,t)=>b+t.volTotal,0);
+                        },0);
+                        const dayReal = cultFilt.reduce((a,c)=>{
+                          return a+c.turnos.reduce((b,t)=>{
+                            const v=parseFloat(getReg(row.date,c.id,t.id,"m3Real")||"");
+                            return b+(isNaN(v)?0:v);
+                          },0);
+                        },0);
+                        const hasReal = cultFilt.some(c=>c.turnos.some(t=>getReg(row.date,c.id,t.id,"m3Real")!==""));
+                        if(hasReal){totCalc+=dayCalc;totReal+=dayReal;diasConDatos++;}
+                        return{...row,dayCalc,dayReal,hasReal};
+                      });
+                      const efic = totCalc>0?(totReal/totCalc*100).toFixed(0):null;
 
-                    {/* ── LEFT: Import + Manual entry ── */}
-                    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-
-                      {/* Import OlivePlus */}
-                      <div className="card" style={{padding:"18px 20px"}}>
-                        <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>IMPORTAR DESDE OLIVEPLUS</div>
-                        <div
-                          onDragOver={e=>{e.preventDefault();setCsvDrag(true);}}
-                          onDragLeave={()=>setCsvDrag(false)}
-                          onDrop={e=>{e.preventDefault();setCsvDrag(false);const f=e.dataTransfer.files[0];if(f)handleCSVFile(f);}}
-                          style={{border:`2px dashed ${csvDrag?"#4A7FA5":"rgba(92,61,40,0.25)"}`,borderRadius:4,padding:"18px 16px",textAlign:"center",
-                            background:csvDrag?"rgba(74,127,165,0.06)":"rgba(232,220,191,0.2)",transition:"all 0.15s",cursor:"pointer"}}
-                          onClick={()=>document.getElementById("csv-input2").click()}>
-                          <div style={{fontSize:24,marginBottom:6}}>📂</div>
-                          <div className="serif" style={{fontSize:15,color:"#5C3D28",marginBottom:3}}>Arrastra el Excel de OlivePlus aquí</div>
-                          <div className="mono" style={{fontSize:9,color:"#9C7A5A"}}>
-                            "Riego acumulado por equipo" · "Reporte por sectores"<br/>
-                            El sistema detecta el período automáticamente
-                          </div>
-                          <input id="csv-input2" type="file" accept=".xlsx,.csv,.tsv,.txt" style={{display:"none"}}
-                            onChange={e=>handleCSVFile(e.target.files[0])}/>
-                        </div>
-                        {csvMsg&&(
-                          <div className="mono" style={{marginTop:10,fontSize:10,padding:"8px 12px",borderRadius:3,whiteSpace:"pre-line",lineHeight:1.6,
-                            background:csvMsg.startsWith("✅")?"rgba(61,107,53,0.08)":"rgba(139,0,0,0.06)",
-                            color:csvMsg.startsWith("✅")?"#3D6B35":"#8B0000",
-                            border:`1px solid ${csvMsg.startsWith("✅")?"rgba(61,107,53,0.25)":"rgba(139,0,0,0.2)"}`}}>
-                            {csvMsg}
+                      return(<>
+                        {/* Summary bar */}
+                        {diasConDatos>0&&(
+                          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+                            {[
+                              {l:"Calculado total",v:totCalc.toFixed(0)+" m³",c:"#B8860B"},
+                              {l:"Real aplicado",v:totReal.toFixed(0)+" m³",c:"#3D6B35"},
+                              {l:"Diferencia",v:`${(totReal-totCalc)>0?"+":""}${(totReal-totCalc).toFixed(0)} m³`,c:(totReal-totCalc)<-50?"#8B0000":(totReal-totCalc)>50?"#3D6B35":"#5C3D28"},
+                              {l:"Eficiencia riego",v:efic+"%",c:efic>=85?"#3D6B35":efic>=70?"#B8860B":"#8B0000"},
+                            ].map(s=>(
+                              <div key={s.l} className="card" style={{padding:"10px 14px"}}>
+                                <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>{s.l.toUpperCase()}</div>
+                                <div className="serif" style={{fontSize:20,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
+                              </div>
+                            ))}
                           </div>
                         )}
-                        <div className="mono" style={{marginTop:10,fontSize:8,color:"#9C7A5A",lineHeight:1.9}}>
-                          <span style={{color:"#3D6B35",fontWeight:500}}>✓ Equipos reconocidos:</span><br/>
-                          <span style={{color:"#5C3D28"}}>Citricos (MELBACE2V4)</span> → Lanelate + Paltos N3<br/>
-                          <span style={{color:"#5C3D28"}}>Naranjos Valencia (MELBACE4V4)</span> → Valencia OP1+OP2<br/>
-                          <span style={{color:"#5C3D28"}}>Paltos (MELBACE1)</span> → Paltos Viejos + Nuevos 1+2<br/>
-                          <span style={{color:"#5C3D28"}}>Linea 2 V3–V6, Linea 1 V1–V3, Linea 3 V1–V2</span> → sector exacto
-                        </div>
-                      </div>
 
-                      {/* Manual entry semanal */}
-                      <div className="card" style={{padding:"18px 20px"}}>
-                        <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:12}}>INGRESO MANUAL SEMANAL</div>
-                        <div style={{marginBottom:12}}>
-                          <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>SEMANA</div>
-                          <select value={regWeekSel} onChange={e=>setRegWeekSel(e.target.value)}
-                            style={{fontFamily:"'Cormorant Garamond',serif",fontSize:13,background:"rgba(44,24,16,0.04)",
-                              border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 10px",borderRadius:2,width:"100%"}}>
-                            {allWeeks.length===0&&<option value={isoWeek(todayStr())}>{weekLabel(isoWeek(todayStr()))}</option>}
-                            {allWeeks.map(wk=><option key={wk} value={wk}>{weekLabel(wk)}</option>)}
-                            {!allWeeks.includes(isoWeek(todayStr()))&&
-                              <option value={isoWeek(todayStr())}>{weekLabel(isoWeek(todayStr()))} (semana actual)</option>}
-                          </select>
-                        </div>
-                        <div style={{marginBottom:12}}>
-                          <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>CULTIVO</div>
-                          <select value={regCultId} onChange={e=>setRegCultId(e.target.value)}
-                            style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
-                              border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 10px",borderRadius:2,width:"100%"}}>
-                            {CULTIVOS.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
-                          </select>
-                        </div>
-                        {(()=>{
-                          const c=CULTIVOS.find(x=>x.id===regCultId);
-                          const calcDays=wRows.filter(r=>isoWeek(r.date)===regWeekSel&&!isFuture(r.date));
-                          return c.turnos.map(t=>{
-                            const calcV=calcDays.reduce((a,r)=>a+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).find(x=>x.id===t.id)?.volTotal||0,0);
-                            const realVal=getRegW(regWeekSel,c.id,t.id,"m3Real");
-                            const diff=realVal!==""?(parseFloat(realVal)-calcV):null;
-                            return(
-                              <div key={t.id} style={{marginBottom:12,paddingBottom:10,borderBottom:"1px solid rgba(92,61,40,0.08)"}}>
-                                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                                  <span className="serif" style={{fontSize:14,fontWeight:600,color:c.color}}>{t.label}</span>
-                                  <span className="mono" style={{fontSize:9,color:"#9C7A5A"}}>calc. <strong>{calcV.toFixed(0)} m³</strong> semana</span>
-                                </div>
-                                <div style={{display:"grid",gridTemplateColumns:"1fr 70px 70px",gap:6}}>
-                                  <div>
-                                    <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>M³ REALES SEMANA</div>
-                                    <div style={{position:"relative"}}>
-                                      <input type="number" step="1" min="0" placeholder="0"
-                                        value={realVal}
-                                        onChange={e=>setRegW(regWeekSel,c.id,t.id,"m3Real",e.target.value)}
-                                        style={{fontFamily:"'DM Mono',monospace",fontSize:13,background:"rgba(44,24,16,0.04)",
-                                          border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}/>
-                                      {diff!=null&&<span className="mono" style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",
-                                        fontSize:9,color:diff<-30?"#8B0000":diff>30?"#3D6B35":"#B8860B",fontWeight:600}}>
-                                        {diff>0?"+":""}{diff.toFixed(0)}
-                                      </span>}
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>EC prom</div>
-                                    <input type="number" step="0.1" placeholder="—"
-                                      value={getRegW(regWeekSel,c.id,t.id,"ec")}
-                                      onChange={e=>setRegW(regWeekSel,c.id,t.id,"ec",e.target.value)}
-                                      style={{fontFamily:"'DM Mono',monospace",fontSize:12,background:"rgba(44,24,16,0.04)",
-                                        border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"4px 5px",borderRadius:2,width:"100%"}}/>
-                                  </div>
-                                  <div>
-                                    <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>pH prom</div>
-                                    <input type="number" step="0.1" placeholder="—"
-                                      value={getRegW(regWeekSel,c.id,t.id,"ph")}
-                                      onChange={e=>setRegW(regWeekSel,c.id,t.id,"ph",e.target.value)}
-                                      style={{fontFamily:"'DM Mono',monospace",fontSize:12,background:"rgba(44,24,16,0.04)",
-                                        border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"4px 5px",borderRadius:2,width:"100%"}}/>
-                                  </div>
-                                </div>
-                                <input type="text" placeholder="Notas: fertilizante, incidencias..."
-                                  value={getRegW(regWeekSel,c.id,t.id,"notas")}
-                                  onChange={e=>setRegW(regWeekSel,c.id,t.id,"notas",e.target.value)}
-                                  style={{fontFamily:"'Cormorant Garamond',serif",fontSize:12,background:"rgba(44,24,16,0.04)",
-                                    border:"1px solid rgba(92,61,40,0.08)",color:"#5C3D28",padding:"4px 8px",borderRadius:2,width:"100%",marginTop:5}}/>
-                              </div>
-                            );
-                          });
-                        })()}
-                        <div className="serif" style={{fontSize:12,color:"#9C7A5A",fontStyle:"italic",marginTop:4}}>
-                          Los m³ son el total de la semana independiente de qué días se regó.
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* ── RIGHT: Weekly comparison table ── */}
-                    <div>
-                      <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>COMPARATIVO SEMANAL · CALCULADO VS REAL</div>
-
-                      {/* Summary cards */}
-                      {hasAnyReal&&(
-                        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
-                          {[
-                            {l:"Calc. total",v:totCalc.toFixed(0)+" m³",c:"#B8860B"},
-                            {l:"Real aplicado",v:totReal.toFixed(0)+" m³",c:"#3D6B35"},
-                            {l:"Diferencia",v:`${(totReal-totCalc)>0?"+":""}${(totReal-totCalc).toFixed(0)} m³`,c:(totReal-totCalc)<-100?"#8B0000":(totReal-totCalc)>100?"#3D6B35":"#5C3D28"},
-                            {l:"Eficiencia",v:eficGlobal?eficGlobal.toFixed(0)+"%":"—",c:eficGlobal>=85?"#3D6B35":eficGlobal>=70?"#B8860B":"#8B0000"},
-                          ].map(s=>(
-                            <div key={s.l} className="card" style={{padding:"10px 14px"}}>
-                              <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3}}>{s.l.toUpperCase()}</div>
-                              <div className="serif" style={{fontSize:20,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Weekly table */}
-                      <div className="card" style={{overflow:"hidden"}}>
-                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                          <thead>
-                            <tr style={{background:"rgba(232,220,191,0.7)"}}>
-                              {["Semana","ETo mm","Lluvia mm","Calc. m³","Real m³","Dif. m³","%","EC","pH"].map((h,hi)=>(
-                                <th key={h} className="mono" style={{padding:"9px 12px",textAlign:hi<3?"left":"right",
-                                  fontSize:9,fontWeight:500,color:"#5C3D28",borderBottom:"2px solid rgba(92,61,40,0.2)",whiteSpace:"nowrap"}}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(allWeeks.length===0?[isoWeek(todayStr())]:allWeeks).map((wk,ri)=>{
-                              const calc_=weekCalc(wk,cultF);
-                              const real_=weekReal(wk,cultF);
-                              const eto_=weekETo(wk), prec_=weekPrecip(wk);
-                              const hasReal=real_>0;
-                              const diff=hasReal?(real_-calc_):null;
-                              const pct=hasReal&&calc_>0?(real_/calc_*100):null;
-                              const isCurrent=wk===isoWeek(todayStr());
-                              const {start,end}=weekDates(wk);
-                              const ecVals=[],phVals=[];
-                              for(const c of cultF) for(const t of c.turnos){
-                                const ec=getRegW(wk,c.id,t.id,"ec"); if(ec) ecVals.push(parseFloat(ec));
-                                const ph=getRegW(wk,c.id,t.id,"ph"); if(ph) phVals.push(parseFloat(ph));
-                              }
-                              const ecAvg=ecVals.length?(ecVals.reduce((a,v)=>a+v,0)/ecVals.length).toFixed(1):"—";
-                              const phAvg=phVals.length?(phVals.reduce((a,v)=>a+v,0)/phVals.length).toFixed(1):"—";
-                              return(
-                                <tr key={wk} onClick={()=>setRegWeekSel(wk)}
-                                  style={{background:wk===regWeekSel?"rgba(194,98,45,0.08)":isCurrent?"rgba(184,134,11,0.05)":ri%2?"rgba(242,235,217,0.2)":"rgba(255,252,244,0.6)",
-                                    borderBottom:"1px solid rgba(92,61,40,0.08)",cursor:"pointer"}}>
-                                  <td style={{padding:"11px 12px",whiteSpace:"nowrap"}}>
-                                    <div className="serif" style={{fontSize:13,fontWeight:isCurrent?700:400,color:isCurrent?"#2C1810":"#5C3D28"}}>
-                                      {weekLabel(wk)}
-                                    </div>
-                                    {isCurrent&&<span className="mono" style={{fontSize:8,padding:"1px 5px",borderRadius:2,background:"rgba(194,98,45,0.12)",color:"#C2622D",border:"1px solid rgba(194,98,45,0.3)"}}>EN CURSO</span>}
-                                    {/* Show dates with data */}
-                                    {(()=>{
-                                      const daysWithData=wRows.filter(r=>isoWeek(r.date)===wk&&!isFuture(r.date));
-                                      if(!daysWithData.length) return null;
-                                      return <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginTop:2}}>{daysWithData.length} días · {start.slice(5).replace("-","/")} al {end.slice(5).replace("-","/")}</div>;
-                                    })()}
-                                  </td>
-                                  <td className="mono" style={{padding:"11px 12px",textAlign:"right",fontSize:12,color:"#C2622D",fontWeight:isCurrent?600:400}}>{eto_.toFixed(1)}</td>
-                                  <td className="mono" style={{padding:"11px 12px",textAlign:"right",fontSize:12,color:prec_>0?"#4A7FA5":"#CCCCCC"}}>{prec_.toFixed(1)}</td>
-                                  <td className="mono" style={{padding:"11px 12px",textAlign:"right",fontSize:13,color:"#B8860B",fontWeight:500}}>{calc_.toFixed(0)}</td>
-                                  <td style={{padding:"11px 12px",textAlign:"right"}}>
-                                    {hasReal
-                                      ?<span className="serif" style={{fontSize:16,fontWeight:700,color:"#3D6B35"}}>{real_.toFixed(0)}</span>
-                                      :<span className="mono" style={{fontSize:11,color:"rgba(92,61,40,0.25)"}}>—</span>}
-                                  </td>
-                                  <td className="mono" style={{padding:"11px 12px",textAlign:"right",fontSize:12,fontWeight:500,
-                                    color:diff==null?"#ccc":diff<-100?"#8B0000":diff>100?"#3D6B35":"#9C7A5A"}}>
-                                    {diff!=null?`${diff>0?"+":""}${diff.toFixed(0)}`:"—"}
-                                  </td>
-                                  <td style={{padding:"11px 12px",textAlign:"right"}}>
-                                    {pct!=null&&<span className="mono" style={{fontSize:11,padding:"2px 6px",borderRadius:2,fontWeight:600,
-                                      background:pct>=85?"rgba(61,107,53,0.12)":pct>=70?"rgba(184,134,11,0.1)":"rgba(139,0,0,0.08)",
-                                      color:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}}>{pct.toFixed(0)}%</span>}
-                                  </td>
-                                  <td className="mono" style={{padding:"11px 12px",textAlign:"right",fontSize:11,color:"#5C3D28"}}>{ecAvg}</td>
-                                  <td className="mono" style={{padding:"11px 12px",textAlign:"right",fontSize:11,color:"#5C3D28"}}>{phAvg}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                          {hasAnyReal&&(
-                            <tfoot>
-                              <tr style={{background:"#2C1810",borderTop:"2px solid rgba(92,61,40,0.4)"}}>
-                                <td className="fell" style={{padding:"10px 12px",fontSize:13,color:"rgba(242,235,217,0.7)"}}>Σ {allWeeks.length} semanas</td>
-                                <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:"#E8A882",fontWeight:700}}>{allWeeks.reduce((a,wk)=>a+weekETo(wk),0).toFixed(1)}</td>
-                                <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:"#7EB3D3"}}>{allWeeks.reduce((a,wk)=>a+weekPrecip(wk),0).toFixed(1)}</td>
-                                <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:"#E8A882",fontWeight:700}}>{totCalc.toFixed(0)}</td>
-                                <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:"#8FA370",fontWeight:700}}>{totReal.toFixed(0)}</td>
-                                <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:(totReal-totCalc)<0?"#E8A882":"#8FA370",fontWeight:500}}>
-                                  {(totReal-totCalc)>0?"+":""}{(totReal-totCalc).toFixed(0)}
-                                </td>
-                                <td style={{padding:"10px 12px",textAlign:"right"}}>
-                                  <span className="mono" style={{fontSize:13,fontWeight:700,color:eficGlobal>=85?"#8FA370":eficGlobal>=70?"#E8C882":"#E8A882"}}>{eficGlobal?.toFixed(0)}%</span>
-                                </td>
-                                <td colSpan={2}/>
+                        {/* Day-by-day table */}
+                        <div className="card" style={{overflow:"hidden"}}>
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                            <thead>
+                              <tr style={{background:"rgba(232,220,191,0.7)"}}>
+                                {["Fecha","Calculado m³","Real m³","Dif. m³","%","EC","pH","Notas"].map((h,hi)=>(
+                                  <th key={h} className="mono" style={{padding:"9px 12px",textAlign:hi<2?"left":"right",fontSize:9,fontWeight:500,color:"#5C3D28",borderBottom:"2px solid rgba(92,61,40,0.2)",letterSpacing:0.5,whiteSpace:"nowrap"}}>{h}</th>
+                                ))}
                               </tr>
-                            </tfoot>
-                          )}
-                        </table>
-                      </div>
+                            </thead>
+                            <tbody>
+                              {rows.map((row,ri)=>{
+                                const hoy=isToday(row.date);
+                                const diff=row.hasReal?(row.dayReal-row.dayCalc):null;
+                                const pct=row.hasReal&&row.dayCalc>0?(row.dayReal/row.dayCalc*100):null;
+                                // EC/pH/notas aggregated
+                                const ecVals=[],phVals=[],notasVals=[];
+                                for(const c of cultFilt) for(const t of c.turnos){
+                                  const ec=getReg(row.date,c.id,t.id,"ec"); if(ec) ecVals.push(ec);
+                                  const ph=getReg(row.date,c.id,t.id,"ph"); if(ph) phVals.push(ph);
+                                  const nt=getReg(row.date,c.id,t.id,"notas"); if(nt) notasVals.push(nt);
+                                }
+                                return(
+                                  <tr key={row.date} style={{background:hoy?"rgba(184,134,11,0.06)":ri%2?"rgba(242,235,217,0.2)":"rgba(255,252,244,0.6)",borderBottom:"1px solid rgba(92,61,40,0.08)"}}>
+                                    <td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>
+                                      <span className="serif" style={{fontSize:14,fontWeight:hoy?700:400,color:hoy?"#2C1810":"#5C3D28"}}>{fmtShort(row.date)}</span>
+                                      {hoy&&<span className="mono" style={{fontSize:8,marginLeft:6,padding:"1px 5px",borderRadius:2,background:"rgba(194,98,45,0.12)",color:"#C2622D",border:"1px solid rgba(194,98,45,0.3)"}}>HOY</span>}
+                                    </td>
+                                    <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:"#B8860B",fontWeight:500}}>{row.dayCalc.toFixed(0)}</td>
+                                    <td style={{padding:"10px 12px",textAlign:"right"}}>
+                                      {row.hasReal
+                                        ? <span className="serif" style={{fontSize:16,fontWeight:700,color:"#3D6B35"}}>{row.dayReal.toFixed(0)}</span>
+                                        : <span className="mono" style={{fontSize:11,color:"rgba(92,61,40,0.25)"}}>—</span>}
+                                    </td>
+                                    <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,
+                                      color:diff==null?"#ccc":diff<-50?"#8B0000":diff>50?"#3D6B35":"#9C7A5A",fontWeight:500}}>
+                                      {diff!=null?`${diff>0?"+":""}${diff.toFixed(0)}`:"—"}
+                                    </td>
+                                    <td style={{padding:"10px 12px",textAlign:"right"}}>
+                                      {pct!=null&&(
+                                        <span className="mono" style={{fontSize:11,padding:"2px 6px",borderRadius:2,fontWeight:600,
+                                          background:pct>=85?"rgba(61,107,53,0.12)":pct>=70?"rgba(184,134,11,0.1)":"rgba(139,0,0,0.08)",
+                                          color:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}}>
+                                          {pct.toFixed(0)}%
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:11,color:"#5C3D28"}}>{ecVals.length?ecVals[0]:"—"}</td>
+                                    <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:11,color:"#5C3D28"}}>{phVals.length?phVals[0]:"—"}</td>
+                                    <td className="serif" style={{padding:"10px 12px",textAlign:"right",fontSize:11,color:"#9C7A5A",maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                      {notasVals.length?notasVals.join(" · "):""}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            {/* Totals footer */}
+                            {diasConDatos>0&&(
+                              <tfoot>
+                                <tr style={{background:"#2C1810",borderTop:"2px solid rgba(92,61,40,0.4)"}}>
+                                  <td className="fell" style={{padding:"10px 12px",fontSize:13,color:"rgba(242,235,217,0.7)",fontWeight:400}}>Σ {diasConDatos} días c/datos</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:"#E8A882",fontWeight:700}}>{totCalc.toFixed(0)}</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:13,color:"#8FA370",fontWeight:700}}>{totReal.toFixed(0)}</td>
+                                  <td className="mono" style={{padding:"10px 12px",textAlign:"right",fontSize:12,color:(totReal-totCalc)<0?"#E8A882":"#8FA370",fontWeight:500}}>
+                                    {(totReal-totCalc)>0?"+":""}{(totReal-totCalc).toFixed(0)}
+                                  </td>
+                                  <td style={{padding:"10px 12px",textAlign:"right"}}>
+                                    <span className="mono" style={{fontSize:13,fontWeight:700,
+                                      color:efic>=85?"#8FA370":efic>=70?"#E8C882":"#E8A882"}}>{efic}%</span>
+                                  </td>
+                                  <td colSpan={3}/>
+                                </tr>
+                              </tfoot>
+                            )}
+                          </table>
+                        </div>
 
-                      {/* Detalle por sector de la semana seleccionada */}
-                      {(()=>{
-                        const wk=regWeekSel;
-                        const days=wRows.filter(r=>isoWeek(r.date)===wk&&!isFuture(r.date));
-                        if(!days.length) return null;
-                        return(
+                        {/* Sector detail for selected date */}
+                        {dias.some(r=>cultFilt.some(c=>c.turnos.some(t=>getReg(r.date,c.id,t.id,"m3Real")!="")))&&(
                           <div style={{marginTop:14}}>
-                            <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>
-                              DETALLE SEMANAL POR SECTOR · {weekLabel(wk).toUpperCase()}
-                            </div>
-                            {cultF.map(c=>{
-                              const calcTotal=days.reduce((a,r)=>a+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((b,t)=>b+t.volTotal,0),0);
-                              const realTotal=c.turnos.reduce((a,t)=>a+(parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0),0);
-                              const hrsCalc=days.reduce((a,r)=>a+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((b,t)=>b+t.horas,0),0);
+                            <div className="mono" style={{fontSize:9,letterSpacing:2.5,color:"#9C7A5A",marginBottom:10}}>DETALLE POR CULTIVO Y SECTOR</div>
+                            {cultFilt.map(c=>{
+                              const hasDatos = dias.some(r=>c.turnos.some(t=>getReg(r.date,c.id,t.id,"m3Real")!=""));
+                              if(!hasDatos) return null;
                               return(
                                 <div key={c.id} className="card" style={{marginBottom:10,overflow:"hidden",border:`1px solid ${c.color}22`}}>
-                                  <div style={{padding:"10px 16px",background:`linear-gradient(135deg,${c.light}44,rgba(255,252,244,0))`,
-                                    borderBottom:"1px solid rgba(92,61,40,0.1)",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                                  <div style={{padding:"10px 16px",background:`linear-gradient(135deg,${c.light}44,rgba(255,252,244,0))`,borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
                                     <span className="fell" style={{fontSize:15,color:"#2C1810"}}>{c.emoji} {c.label}</span>
-                                    <div style={{display:"flex",gap:20}}>
-                                      <div style={{textAlign:"right"}}>
-                                        <div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>CALCULADO</div>
-                                        <span className="serif" style={{fontWeight:700,fontSize:17,color:"#B8860B"}}>{calcTotal.toFixed(0)} m³</span>
-                                        <span className="mono" style={{fontSize:8,color:"#9C7A5A",marginLeft:4}}>{hToHM(hrsCalc)}</span>
-                                      </div>
-                                      {realTotal>0&&<div style={{textAlign:"right"}}>
-                                        <div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>REAL</div>
-                                        <span className="serif" style={{fontWeight:700,fontSize:17,color:"#3D6B35"}}>{realTotal.toFixed(0)} m³</span>
-                                        <span className="mono" style={{fontSize:9,marginLeft:4,padding:"1px 5px",borderRadius:2,
-                                          background:calcTotal>0&&(realTotal/calcTotal)>=0.85?"rgba(61,107,53,0.1)":"rgba(139,0,0,0.08)",
-                                          color:calcTotal>0&&(realTotal/calcTotal)>=0.85?"#3D6B35":"#8B0000"}}>
-                                          {calcTotal>0?(realTotal/calcTotal*100).toFixed(0):0}%
-                                        </span>
-                                      </div>}
-                                    </div>
+                                    <span className="mono" style={{fontSize:9,color:"#9C7A5A",marginLeft:10}}>{c.area} ha</span>
                                   </div>
                                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                                    <thead><tr style={{background:"rgba(232,220,191,0.3)"}}>
-                                      {["Sector","ha","Calc. m³ sem.","⏱ Calc.","Real m³ sem.","Dif.","EC","pH","Notas"].map((h,hi)=>(
-                                        <th key={h} className="mono" style={{padding:"7px 12px",textAlign:hi<2?"left":"right",
-                                          fontSize:8,fontWeight:500,color:"#5C3D28",borderBottom:"1px solid rgba(92,61,40,0.15)",whiteSpace:"nowrap"}}>{h}</th>
-                                      ))}
-                                    </tr></thead>
+                                    <thead>
+                                      <tr style={{background:"rgba(232,220,191,0.4)"}}>
+                                        <th className="mono" style={{padding:"7px 14px",textAlign:"left",fontSize:8,fontWeight:500,color:"#5C3D28",borderBottom:"1px solid rgba(92,61,40,0.15)"}}>Sector</th>
+                                        {dias.filter(r=>c.turnos.some(t=>getReg(r.date,c.id,t.id,"m3Real")!="")).map(r=>(
+                                          <th key={r.date} className="mono" style={{padding:"7px 10px",textAlign:"right",fontSize:8,fontWeight:500,color:isToday(r.date)?"#C2622D":"#5C3D28",borderBottom:"1px solid rgba(92,61,40,0.15)",whiteSpace:"nowrap"}}>
+                                            {fmtShort(r.date).split(",")[0]}
+                                          </th>
+                                        ))}
+                                      </tr>
+                                    </thead>
                                     <tbody>
                                       {c.turnos.map((t,ti)=>{
-                                        const calcT=days.reduce((a,r)=>a+(calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).find(x=>x.id===t.id)?.volTotal||0),0);
-                                        const hrsT=days.reduce((a,r)=>a+(calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).find(x=>x.id===t.id)?.horas||0),0);
-                                        const realT=parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0;
-                                        const diff=realT>0?(realT-calcT):null;
-                                        const pct=realT>0&&calcT>0?(realT/calcT*100):null;
+                                        const diasConSector=dias.filter(r=>c.turnos.some(tt=>getReg(r.date,c.id,tt.id,"m3Real")!=""));
                                         return(
                                           <tr key={t.id} style={{background:ti%2?"rgba(242,235,217,0.2)":"rgba(255,252,244,0.5)",borderBottom:"1px solid rgba(92,61,40,0.07)"}}>
-                                            <td style={{padding:"9px 12px"}}>
+                                            <td style={{padding:"9px 14px"}}>
                                               <div className="serif" style={{fontSize:13,fontWeight:600,color:c.color}}>{t.label}</div>
-                                              <div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>{t.bloques}</div>
+                                              <div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>{t.ha} ha · {t.q} m³/h</div>
                                             </td>
-                                            <td className="mono" style={{padding:"9px 12px",fontSize:12,color:"#5C3D28"}}>{t.ha}</td>
-                                            <td style={{padding:"9px 12px",textAlign:"right"}}>
-                                              <span className="serif" style={{fontSize:15,fontWeight:600,color:"#B8860B"}}>{calcT.toFixed(0)}</span>
-                                              <span className="mono" style={{fontSize:8,color:"#9C7A5A"}}> m³</span>
-                                            </td>
-                                            <td className="mono" style={{padding:"9px 12px",textAlign:"right",fontSize:11,color:"#9C7A5A"}}>{hToHM(hrsT)}</td>
-                                            <td style={{padding:"9px 12px",textAlign:"right"}}>
-                                              {realT>0
-                                                ?<span className="serif" style={{fontSize:17,fontWeight:700,color:"#3D6B35"}}>{realT.toFixed(0)}</span>
-                                                :<span className="mono" style={{fontSize:10,color:"rgba(92,61,40,0.2)"}}>—</span>}
-                                            </td>
-                                            <td className="mono" style={{padding:"9px 12px",textAlign:"right",fontSize:11,fontWeight:500,
-                                              color:diff==null?"#ccc":diff<-50?"#8B0000":diff>50?"#3D6B35":"#9C7A5A"}}>
-                                              {diff!=null?`${diff>0?"+":""}${diff.toFixed(0)}`:"—"}
-                                            </td>
-                                            <td className="mono" style={{padding:"9px 12px",textAlign:"right",fontSize:11,color:"#5C3D28"}}>{getRegW(wk,c.id,t.id,"ec")||"—"}</td>
-                                            <td className="mono" style={{padding:"9px 12px",textAlign:"right",fontSize:11,color:"#5C3D28"}}>{getRegW(wk,c.id,t.id,"ph")||"—"}</td>
-                                            <td className="serif" style={{padding:"9px 12px",textAlign:"right",fontSize:11,color:"#9C7A5A",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                              {getRegW(wk,c.id,t.id,"notas")||""}
-                                            </td>
+                                            {diasConSector.map(r=>{
+                                              const real=getReg(r.date,c.id,t.id,"m3Real");
+                                              const tR=calcAuto(c,kcs,kcAuto,r.eto,r.precip,r.date);
+                                              const calcV=tR.find(x=>x.id===t.id)?.volTotal;
+                                              const pct=real!==""&&calcV?((parseFloat(real)/calcV)*100):null;
+                                              return(
+                                                <td key={r.date} style={{padding:"9px 10px",textAlign:"right"}}>
+                                                  {real!==""
+                                                    ?<>
+                                                      <div className="serif" style={{fontSize:15,fontWeight:700,color:c.color}}>{parseFloat(real).toFixed(0)}</div>
+                                                      {pct!=null&&<div className="mono" style={{fontSize:8,color:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}}>{pct.toFixed(0)}%</div>}
+                                                    </>
+                                                    :<span className="mono" style={{fontSize:10,color:"rgba(92,61,40,0.2)"}}>—</span>}
+                                                </td>
+                                              );
+                                            })}
                                           </tr>
                                         );
                                       })}
@@ -2301,13 +1716,14 @@ export default function App() {
                               );
                             })}
                           </div>
-                        );
-                      })()}
-                    </div>
+                        )}
+                      </>);
+                    })()}
                   </div>
                 </div>
-              );
-            })()}
+              </div>
+            )}
+
             {/* ──── PLANOS ──── */}
             {tab==="planos"&&(
               <div className="fade">
