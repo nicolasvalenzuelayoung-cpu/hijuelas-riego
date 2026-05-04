@@ -408,7 +408,7 @@ export default function App() {
   const fetchWeather = useCallback(async()=>{
     setLoading(true); setError(null);
     try{
-      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max&timezone=America%2FSantiago&past_days=7&forecast_days=3`);
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&elevation=312&daily=et0_fao_evapotranspiration,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_max&timezone=America%2FSantiago&past_days=7&forecast_days=7`);
       if(!r.ok) throw new Error("HTTP "+r.status);
       setWeather((await r.json()).daily);
       setLastUpd(new Date().toLocaleTimeString("es-CL"));
