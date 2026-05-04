@@ -510,7 +510,7 @@ export default function App() {
           ))}
         </div>
         <div style={{width:1,height:26,background:"rgba(92,61,40,0.25)"}}/>
-        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["graficos","📈 Gráficos"],["bitacora","📓 Bitácora"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
+        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["balance","💧 Balance"],["graficos","📈 Gráficos"],["bitacora","📓 Bitácora"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
           <button key={k} className={`tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -1050,6 +1050,131 @@ export default function App() {
                 })()}
               </div>
             )}
+
+            {/* ──── BALANCE HÍDRICO ──── */}
+            {tab==="balance"&&(()=>{
+              const cultF=visibles;
+              const past=wRows.filter(r=>!isFuture(r.date));
+              // Acumulados por semana
+              const semanas=[...new Set(past.map(r=>isoWeek(r.date)))];
+              const weekRows=semanas.map(wk=>{
+                const days=past.filter(r=>isoWeek(r.date)===wk);
+                const eto=days.reduce((a,r)=>a+getEto(r),0);
+                const precip=days.reduce((a,r)=>a+getPrecip(r),0);
+                const calc=cultF.reduce((a,c)=>a+days.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
+                const real=cultF.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+(parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0),0),0);
+                return{wk,eto,precip,calc,real,hasReal:real>0};
+              });
+              // Acumulados totales
+              let cumCalc=0,cumReal=0;
+              const weekAcum=weekRows.map(w=>{cumCalc+=w.calc;if(w.hasReal)cumReal+=w.real;return{...w,cumCalc,cumReal};});
+              const totCalc=cumCalc,totReal=cumReal;
+              const efic=totCalc>0&&totReal>0?(totReal/totCalc*100):null;
+              const deficit=totCalc-totReal;
+              const diasSinLluvia=past.filter(r=>getPrecip(r)<1).length;
+
+              // SVG helpers
+              const W=820,H=240,PL=58,PR=18,PT=24,PB=44;
+              const IW=W-PL-PR,IH=H-PT-PB;
+              const maxVol=Math.max(...weekRows.map(w=>Math.max(w.calc,w.real)),100)*1.18;
+
+              return(
+                <div className="fade">
+                  <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Balance Hídrico</h2>
+                  <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic",marginBottom:20}}>
+                    Seguimiento del déficit o exceso acumulado · Temporada {new Date().getFullYear()}
+                  </div>
+                  {/* KPI */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(155px,1fr))",gap:12,marginBottom:22}}>
+                    {[
+                      {l:"Calc. acumulado",v:totCalc.toFixed(0)+" m³",c:"#B8860B"},
+                      {l:"Real aplicado",  v:totReal>0?totReal.toFixed(0)+" m³":"sin datos",c:"#3D6B35"},
+                      {l:"Déficit acum.",  v:totReal>0?`${deficit>0?"-":"+"} ${Math.abs(deficit).toFixed(0)} m³`:"—",
+                        c:deficit>500?"#8B0000":deficit>200?"#B8860B":"#3D6B35"},
+                      {l:"Eficiencia",     v:efic?efic.toFixed(0)+"%":"—",
+                        c:efic>=85?"#3D6B35":efic>=70?"#B8860B":"#8B0000"},
+                      {l:"Días sin lluvia",v:diasSinLluvia+" días",c:diasSinLluvia>20?"#8B0000":diasSinLluvia>10?"#B8860B":"#5C3D28"},
+                      {l:"Semanas registro",v:weekRows.filter(w=>w.hasReal).length+"/"+weekRows.length,c:"#5C3D28"},
+                    ].map(s=>(
+                      <div key={s.l} className="card" style={{padding:"12px 16px"}}>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:3,letterSpacing:0.5}}>{s.l.toUpperCase()}</div>
+                        <div className="serif" style={{fontSize:21,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Gráfico barras semanal */}
+                  <div className="card" style={{padding:"0 0 10px",marginBottom:16,overflow:"hidden"}}>
+                    <div style={{padding:"13px 18px 8px",borderBottom:"1px solid rgba(92,61,40,0.1)"}}>
+                      <div className="fell" style={{fontSize:17,fontWeight:400}}>Riego semanal — Calculado vs Real</div>
+                    </div>
+                    <div style={{overflowX:"auto",padding:"8px 0 0"}}>
+                      {weekRows.length===0
+                        ?<div className="serif" style={{padding:"30px",textAlign:"center",color:"#9C7A5A",fontStyle:"italic"}}>Sin datos históricos aún</div>
+                        :<svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{display:"block"}}>
+                          {[0,0.25,0.5,0.75,1].map(f=>{
+                            const y=PT+IH*(1-f);
+                            return <g key={f}>
+                              <line x1={PL} x2={W-PR} y1={y} y2={y} stroke="rgba(92,61,40,0.09)" strokeDasharray="4,3"/>
+                              <text x={PL-4} y={y+4} textAnchor="end" fontSize={9} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{Math.round(maxVol*f)}</text>
+                            </g>;
+                          })}
+                          <line x1={PL} x2={PL} y1={PT} y2={H-PB} stroke="rgba(92,61,40,0.18)" strokeWidth={1}/>
+                          <line x1={PL} x2={W-PR} y1={H-PB} y2={H-PB} stroke="rgba(92,61,40,0.18)" strokeWidth={1}/>
+                          {weekRows.map((w,i)=>{
+                            const bw=Math.max(8,Math.min(28,IW/weekRows.length*0.35));
+                            const xBase=PL+i*(IW/weekRows.length)+(IW/weekRows.length)*0.12;
+                            const hC=(w.calc/maxVol)*IH, hR=w.hasReal?(w.real/maxVol)*IH:0;
+                            const pct=w.hasReal&&w.calc>0?(w.real/w.calc*100):null;
+                            const {end}=weekDates(w.wk);
+                            const lbl=new Date(end+"T12:00:00").toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit"});
+                            return <g key={w.wk}>
+                              <rect x={xBase} y={H-PB-hC} width={bw} height={hC} fill="rgba(184,134,11,0.35)" stroke="#B8860B" strokeWidth={0.5} rx={2}/>
+                              {w.hasReal&&<rect x={xBase+bw+2} y={H-PB-hR} width={bw} height={hR} rx={2}
+                                fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} opacity={0.85}/>}
+                              {pct!=null&&<text x={xBase+bw+2+bw/2} y={H-PB-hR-5} textAnchor="middle" fontSize={8}
+                                fill={pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"} fontFamily="'DM Mono',monospace" fontWeight="600">{pct.toFixed(0)}%</text>}
+                              <text x={xBase+bw} y={H-PB+14} textAnchor="middle" fontSize={8.5} fill="#9C7A5A" fontFamily="'DM Mono',monospace">{lbl}</text>
+                            </g>;
+                          })}
+                          <g transform={`translate(${PL},${PT-6})`}>
+                            <rect x={0} y={0} width={10} height={8} fill="rgba(184,134,11,0.4)" stroke="#B8860B" strokeWidth={0.5} rx={1}/>
+                            <text x={14} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Calculado m³</text>
+                            <rect x={110} y={0} width={10} height={8} fill="#3D6B35" rx={1}/>
+                            <text x={124} y={8} fontSize={8.5} fill="#5C3D28" fontFamily="'DM Mono',monospace">Real OlivePlus m³ · % = eficiencia</text>
+                          </g>
+                        </svg>}
+                    </div>
+                  </div>
+                  {/* Balance por cultivo */}
+                  <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2.5,marginBottom:12}}>POR CULTIVO</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+                    {cultF.map(c=>{
+                      const calcC=past.reduce((a,r)=>a+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((b,t)=>b+t.volTotal,0),0);
+                      const realC=semanas.reduce((a,wk)=>a+c.turnos.reduce((b,t)=>b+(parseFloat(getRegW(wk,c.id,t.id,"m3Real")||0)||0),0),0);
+                      const pct=calcC>0&&realC>0?(realC/calcC*100):null;
+                      return(
+                        <div key={c.id} className="card" style={{padding:"14px 16px",borderLeft:`3px solid ${c.color}`}}>
+                          <div className="fell" style={{fontSize:15,color:"#2C1810",marginBottom:8}}>{c.emoji} {c.label}</div>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                            <div><div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>CALC.</div>
+                              <span className="serif" style={{fontWeight:700,fontSize:18,color:"#B8860B"}}>{calcC.toFixed(0)} m³</span></div>
+                            {realC>0&&<div style={{textAlign:"right"}}><div className="mono" style={{fontSize:8,color:"#9C7A5A"}}>REAL</div>
+                              <span className="serif" style={{fontWeight:700,fontSize:18,color:"#3D6B35"}}>{realC.toFixed(0)} m³</span></div>}
+                          </div>
+                          <div style={{height:6,background:"rgba(92,61,40,0.1)",borderRadius:3,marginBottom:5,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:`${Math.min(pct||0,100)}%`,
+                              background:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000",borderRadius:3}}/>
+                          </div>
+                          <div className="mono" style={{fontSize:9,color:pct>=85?"#3D6B35":pct>=70?"#B8860B":"#8B0000"}}>
+                            {pct?pct.toFixed(0)+"% eficiencia":"Sin datos reales"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ──── GRÁFICOS ──── */}
             {tab==="graficos"&&(()=>{
