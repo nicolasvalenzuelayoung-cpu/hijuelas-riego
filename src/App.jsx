@@ -864,7 +864,14 @@ export default function App() {
             {/* ──── PROGRAMA DEL DÍA ──── */}
             {tab==="hoy"&&todayRow&&(
               <div className="fade">
-                <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:4}}>Programa de Riego</h2>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,flexWrap:"wrap",gap:10}}>
+                  <h2 className="fell" style={{fontSize:24,fontWeight:400}}>Programa de Riego</h2>
+                  <button onClick={()=>window.print()} className="serif"
+                    style={{fontSize:14,padding:"6px 18px",border:"1px solid rgba(92,61,40,0.35)",borderRadius:2,
+                      background:"transparent",color:"#2C1810",cursor:"pointer"}}>
+                    🖨 Imprimir
+                  </button>
+                </div>
                 <div className="serif" style={{fontSize:16,color:"#9C7A5A",fontStyle:"italic",marginBottom:22}}>{fmtFull(todayStr())} · ETo {getEto(todayRow).toFixed(2)} mm/día</div>
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {visibles.map(c=>{
