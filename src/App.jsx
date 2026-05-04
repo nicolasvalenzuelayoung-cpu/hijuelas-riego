@@ -117,6 +117,16 @@ export default function App() {
   const [kcs,     setKcs]     = useState(Object.fromEntries(CULTIVOS.map(c=>[c.id,kcDeFecha(c.id)])));
   const [kcAuto,  setKcAuto]  = useState(true);
 
+  // ── Bitácora de campo ─────────────────────────────────────
+  const [bitacora, setBitacora] = useState(()=>{
+    try{ return JSON.parse(localStorage.getItem("hijuelas_bitacora")||"[]"); }catch{ return []; }
+  });
+  const [bitaForm, setBitaForm] = useState(false);
+  const [bitaNew,  setBitaNew]  = useState({fecha:todayStr(),tipo:"otro",cultivos:"todos",nota:""});
+  useEffect(()=>{
+    try{ localStorage.setItem("hijuelas_bitacora",JSON.stringify(bitacora)); }catch(e){}
+  },[bitacora]);
+
   // ── Datos manuales estación FieldClimate ───────────────────
   // Permite ingresar datos reales de "Nueva Purehue" [0020F829]
   // y recalcular ETo FAO-PM con valores medidos en vez de ERA5
@@ -500,7 +510,7 @@ export default function App() {
           ))}
         </div>
         <div style={{width:1,height:26,background:"rgba(92,61,40,0.25)"}}/>
-        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["graficos","📈 Gráficos"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
+        {[["tabla","📅 Climática"],["hoy","☀ Programa del Día"],["resumen","📊 Resumen"],["graficos","📈 Gráficos"],["bitacora","📓 Bitácora"],["registro","📋 Registro Real"],["planos","📐 Planos"]].map(([k,l])=>(
           <button key={k} className={`tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -1419,6 +1429,137 @@ export default function App() {
                 </div>
               );
             })()}
+
+            {/* ──── BITÁCORA DE CAMPO ──── */}
+            {tab==="bitacora"&&(
+              <div className="fade">
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
+                  <div>
+                    <h2 className="fell" style={{fontSize:24,fontWeight:400,marginBottom:2}}>Bitácora de Campo</h2>
+                    <div className="serif" style={{fontSize:14,color:"#9C7A5A",fontStyle:"italic"}}>
+                      Registro de eventos del predio · Heladas · Cosecha · Floraciones · Plagas · Aplicaciones
+                    </div>
+                  </div>
+                  <button onClick={()=>setBitaForm(p=>!p)} className="serif"
+                    style={{fontSize:15,padding:"7px 18px",border:"1px solid rgba(92,61,40,0.35)",borderRadius:2,
+                      background:bitaForm?"#2C1810":"transparent",color:bitaForm?"#F2EBD9":"#2C1810",cursor:"pointer"}}>
+                    {bitaForm?"✕ Cancelar":"+ Nuevo evento"}
+                  </button>
+                </div>
+                {bitaForm&&(
+                  <div className="card" style={{padding:"18px 22px",marginBottom:20}}>
+                    <div style={{display:"grid",gridTemplateColumns:"160px 190px 1fr",gap:12,marginBottom:12}}>
+                      <div>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>FECHA</div>
+                        <input type="date" value={bitaNew.fecha}
+                          onChange={e=>setBitaNew(p=>({...p,fecha:e.target.value}))}
+                          style={{fontFamily:"'DM Mono',monospace",fontSize:12,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"6px 8px",borderRadius:2,width:"100%"}}/>
+                      </div>
+                      <div>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>TIPO</div>
+                        <select value={bitaNew.tipo} onChange={e=>setBitaNew(p=>({...p,tipo:e.target.value}))}
+                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}>
+                          {[["helada","❄ Helada"],["lluvia","🌧 Lluvia fuerte"],["floracion","🌸 Floración"],
+                            ["cuaja","Cuaja"],["cosecha","🧺 Cosecha"],["poda","✂ Poda"],
+                            ["fertilizacion","🧪 Fertilización"],["plaga","🐛 Plaga"],
+                            ["riego_extra","💧 Riego extra"],["visita","👤 Visita técnica"],["otro","📌 Otro"]
+                          ].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>CULTIVO</div>
+                        <select value={bitaNew.cultivos} onChange={e=>setBitaNew(p=>({...p,cultivos:e.target.value}))}
+                          style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
+                            border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"5px 8px",borderRadius:2,width:"100%"}}>
+                          <option value="todos">Todo el predio</option>
+                          {CULTIVOS.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{marginBottom:12}}>
+                      <div className="mono" style={{fontSize:8,color:"#9C7A5A",marginBottom:4}}>DESCRIPCIÓN</div>
+                      <textarea value={bitaNew.nota} onChange={e=>setBitaNew(p=>({...p,nota:e.target.value}))}
+                        placeholder="Describe el evento, mediciones, acciones tomadas..."
+                        rows={3} style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,background:"rgba(44,24,16,0.04)",
+                          border:"1px solid rgba(92,61,40,0.3)",color:"#2C1810",padding:"8px 10px",
+                          borderRadius:2,width:"100%",resize:"vertical",lineHeight:1.5}}/>
+                    </div>
+                    <button onClick={()=>{
+                      if(!bitaNew.nota.trim()) return;
+                      setBitacora(p=>[{...bitaNew,id:Date.now()},...p]);
+                      setBitaNew({fecha:todayStr(),tipo:"otro",cultivos:"todos",nota:""});
+                      setBitaForm(false);
+                    }} className="serif" style={{fontSize:15,padding:"8px 24px",background:"#2C1810",
+                      color:"#F2EBD9",border:"none",borderRadius:2,cursor:"pointer"}}>
+                      Guardar evento
+                    </button>
+                  </div>
+                )}
+                {bitacora.length===0
+                  ?<div className="card" style={{padding:"40px 24px",textAlign:"center"}}>
+                    <div className="serif" style={{fontSize:18,color:"#9C7A5A",fontStyle:"italic"}}>
+                      Sin eventos aún · Usa "+ Nuevo evento" para registrar
+                    </div>
+                  </div>
+                  :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {(()=>{
+                      const META={
+                        helada:{ico:"❄",c:"#4A7FA5"},lluvia:{ico:"🌧",c:"#4A7FA5"},
+                        floracion:{ico:"🌸",c:"#B8860B"},cuaja:{ico:"●",c:"#5C3D28"},
+                        cosecha:{ico:"🧺",c:"#C2622D"},poda:{ico:"✂",c:"#5C3D28"},
+                        fertilizacion:{ico:"🧪",c:"#3D6B35"},plaga:{ico:"🐛",c:"#8B0000"},
+                        riego_extra:{ico:"💧",c:"#4A7FA5"},visita:{ico:"👤",c:"#9C7A5A"},
+                        otro:{ico:"📌",c:"#9C7A5A"},
+                      };
+                      const byMonth={};
+                      bitacora.forEach(ev=>{
+                        const m=ev.fecha.slice(0,7);
+                        if(!byMonth[m]) byMonth[m]=[];
+                        byMonth[m].push(ev);
+                      });
+                      return Object.entries(byMonth).sort(([a],[b])=>b.localeCompare(a)).map(([mes,evs])=>(
+                        <div key={mes}>
+                          <div className="mono" style={{fontSize:9,color:"#9C7A5A",letterSpacing:2,marginBottom:8,marginTop:4}}>
+                            {new Date(mes+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"}).toUpperCase()}
+                          </div>
+                          {evs.sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(ev=>{
+                            const m=META[ev.tipo]||META.otro;
+                            const cult=ev.cultivos==="todos"?"Todo el predio":CULTIVOS.find(c=>c.id===ev.cultivos)?.label||ev.cultivos;
+                            return(
+                              <div key={ev.id} className="card" style={{padding:"12px 18px",marginBottom:6,
+                                display:"flex",gap:14,alignItems:"flex-start",borderLeft:`3px solid ${m.c}44`}}>
+                                <div style={{width:32,height:32,borderRadius:"50%",background:m.c+"14",display:"flex",
+                                  alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>{m.ico}</div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:3}}>
+                                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                                      <span className="serif" style={{fontSize:14,fontWeight:600,color:m.c}}>
+                                        {ev.tipo.replace(/_/g," ").replace(/^\w/,s=>s.toUpperCase())}
+                                      </span>
+                                      <span className="mono" style={{fontSize:9,padding:"1px 6px",borderRadius:2,
+                                        background:m.c+"12",color:m.c}}>{cult}</span>
+                                    </div>
+                                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                                      <span className="mono" style={{fontSize:10,color:"#9C7A5A"}}>{fmtShort(ev.fecha)}</span>
+                                      <button onClick={()=>setBitacora(p=>p.filter(e=>e.id!==ev.id))}
+                                        style={{background:"transparent",border:"none",color:"rgba(92,61,40,0.3)",
+                                          cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
+                                    </div>
+                                  </div>
+                                  {ev.nota&&<div className="serif" style={{fontSize:13,color:"#5C3D28",lineHeight:1.5}}>{ev.nota}</div>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                }
+              </div>
+            )}
 
             {/* ──── REGISTRO REAL ──── */}
             {tab==="registro"&&(
