@@ -190,43 +190,6 @@ export default function App() {
     try{ localStorage.setItem("hijuelas_bitacora",JSON.stringify(bitacora)); }catch(e){}
   },[bitacora]);
 
-  // ── Alertas automáticas ───────────────────────────────────
-  const alertas = weather ? (()=>{
-    const alerts = [];
-    const futRows = wRows.filter(r=>isFuture(r.date)).slice(0,3);
-    // Helada: T°mín < 4°C en próximos 3 días
-    const heladaRow = futRows.find(r=>getTmin(r)<4);
-    if(heladaRow) alerts.push({
-      tipo:"helada", nivel:"rojo",
-      msg:`⚠ Riesgo de helada: T°mín ${getTmin(heladaRow).toFixed(1)}°C el ${fmtShort(heladaRow.date)}`,
-      accion:"Activar control de heladas"
-    });
-    // ETo muy alto: >5.5 mm/día hoy o mañana
-    const etoCritico = wRows.find(r=>(isToday(r.date)||isFuture(r.date))&&getEto(r)>5.5);
-    if(etoCritico) alerts.push({
-      tipo:"eto_alto", nivel:"naranja",
-      msg:`☀ ETo elevado: ${getEto(etoCritico).toFixed(2)} mm/día ${isToday(etoCritico.date)?"hoy":fmtShort(etoCritico.date)}`,
-      accion:"Verificar horas de riego"
-    });
-    // Lluvia significativa próximas 48h
-    const lluviaRow = futRows.slice(0,2).find(r=>r.precip>8||(r.precipProb&&r.precipProb>70));
-    if(lluviaRow) alerts.push({
-      tipo:"lluvia", nivel:"azul",
-      msg:`🌧 Lluvia prevista: ${lluviaRow.precip.toFixed(1)}mm ${lluviaRow.precipProb?`(${lluviaRow.precipProb}% prob.)`:""} el ${fmtShort(lluviaRow.date)}`,
-      accion:"Considerar suspender o reducir riego"
-    });
-    // Balance hídrico: déficit acumulado >15% de lo calculado
-    const past = wRows.filter(r=>!isFuture(r.date));
-    const totCalcPast = CULTIVOS.reduce((a,c)=>a+past.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
-    const totRealPast = CULTIVOS.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+Object.entries(regSem).reduce((bb,[wk,v])=>bb+(parseFloat(v[`${c.id}__${t.id}`]?.m3Real||0)||0),0),0),0);
-    const deficPct = totCalcPast>0&&totRealPast>0?((totCalcPast-totRealPast)/totCalcPast*100):null;
-    if(deficPct!==null&&deficPct>15) alerts.push({
-      tipo:"deficit", nivel:"naranja",
-      msg:`💧 Déficit hídrico acumulado: ${deficPct.toFixed(0)}% bajo lo calculado (${(totCalcPast-totRealPast).toFixed(0)} m³)`,
-      accion:"Revisar programa de riego semanal"
-    });
-    return alerts;
-  })() : [];
   // Permite ingresar datos reales de "Nueva Purehue" [0020F829]
   // y recalcular ETo FAO-PM con valores medidos en vez de ERA5
   const [stData, setStData] = useState(() => {
@@ -293,7 +256,45 @@ export default function App() {
   const getHR   = (row) => stData[row.date]?.hr   ? parseFloat(stData[row.date].hr)   : row.hum;
   const getWind = (row) => stData[row.date]?.viento? parseFloat(stData[row.date].viento): row.wind;
   const getPrecip=(row) => stData[row.date]?.lluvia? parseFloat(stData[row.date].lluvia): row.precip;
-  const hasStation=(fecha)=> !!(stData[fecha]?.tmax && stData[fecha]?.tmin); // true = sigue fenología mensual
+  const hasStation=(fecha)=> !!(stData[fecha]?.tmax && stData[fecha]?.tmin);
+
+  // ── Alertas automáticas ───────────────────────────────────
+  const alertas = weather ? (()=>{
+    const alerts = [];
+    const futRows = wRows.filter(r=>isFuture(r.date)).slice(0,3);
+    // Helada: T°mín < 4°C en próximos 3 días
+    const heladaRow = futRows.find(r=>getTmin(r)<4);
+    if(heladaRow) alerts.push({
+      tipo:"helada", nivel:"rojo",
+      msg:`⚠ Riesgo de helada: T°mín ${getTmin(heladaRow).toFixed(1)}°C el ${fmtShort(heladaRow.date)}`,
+      accion:"Activar control de heladas"
+    });
+    // ETo muy alto: >5.5 mm/día hoy o mañana
+    const etoCritico = wRows.find(r=>(isToday(r.date)||isFuture(r.date))&&getEto(r)>5.5);
+    if(etoCritico) alerts.push({
+      tipo:"eto_alto", nivel:"naranja",
+      msg:`☀ ETo elevado: ${getEto(etoCritico).toFixed(2)} mm/día ${isToday(etoCritico.date)?"hoy":fmtShort(etoCritico.date)}`,
+      accion:"Verificar horas de riego"
+    });
+    // Lluvia significativa próximas 48h
+    const lluviaRow = futRows.slice(0,2).find(r=>r.precip>8||(r.precipProb&&r.precipProb>70));
+    if(lluviaRow) alerts.push({
+      tipo:"lluvia", nivel:"azul",
+      msg:`🌧 Lluvia prevista: ${lluviaRow.precip.toFixed(1)}mm ${lluviaRow.precipProb?`(${lluviaRow.precipProb}% prob.)`:""} el ${fmtShort(lluviaRow.date)}`,
+      accion:"Considerar suspender o reducir riego"
+    });
+    // Balance hídrico: déficit acumulado >15% de lo calculado
+    const past = wRows.filter(r=>!isFuture(r.date));
+    const totCalcPast = CULTIVOS.reduce((a,c)=>a+past.reduce((b,r)=>b+calcAuto(c,kcs,kcAuto,getEto(r),getPrecip(r),r.date).reduce((bb,t)=>bb+t.volTotal,0),0),0);
+    const totRealPast = CULTIVOS.reduce((a,c)=>a+c.turnos.reduce((b,t)=>b+Object.entries(regSem).reduce((bb,[wk,v])=>bb+(parseFloat(v[`${c.id}__${t.id}`]?.m3Real||0)||0),0),0),0);
+    const deficPct = totCalcPast>0&&totRealPast>0?((totCalcPast-totRealPast)/totCalcPast*100):null;
+    if(deficPct!==null&&deficPct>15) alerts.push({
+      tipo:"deficit", nivel:"naranja",
+      msg:`💧 Déficit hídrico acumulado: ${deficPct.toFixed(0)}% bajo lo calculado (${(totCalcPast-totRealPast).toFixed(0)} m³)`,
+      accion:"Revisar programa de riego semanal"
+    });
+    return alerts;
+  })() : []; // true = sigue fenología mensual
   const [selDate, setSelDate] = useState(null);
   // ── Gráficos ──────────────────────────────────────────────
   const [chartCult, setChartCult] = useState("todos");
@@ -322,7 +323,7 @@ export default function App() {
       return weekly;
     } catch{ return {}; }
   });
-  const [regWeekSel, setRegWeekSel] = useState(()=>isoWeek(todayStr()));
+  const [regWeekSel, setRegWeekSel] = useState(isoWeek(todayStr()));
   const [regCultId,  setRegCultId]  = useState(CULTIVOS[0].id);
   const [csvDrag,    setCsvDrag]    = useState(false);
   const [csvMsg,     setCsvMsg]     = useState(null);
